@@ -91,16 +91,16 @@ void RemoteServer::acceptConnections() {
 }
 
 void RemoteServer::handleClient(int client_socket) {
-    Protocol::PacketHeader header;
-    std::vector<uint8_t> header_buffer(Protocol::HEADER_SIZE);
+    RemoteProto::PacketHeader header;
+    std::vector<uint8_t> header_buffer(RemoteProto::HEADER_SIZE);
     
     while (m_running) {
         // Читаем заголовок
-        if (!recvAll(client_socket, header_buffer.data(), Protocol::HEADER_SIZE)) {
+        if (!recvAll(client_socket, header_buffer.data(), RemoteProto::HEADER_SIZE)) {
             break;
         }
         
-        if (!Protocol::parseHeader(header_buffer.data(), header)) {
+        if (!RemoteProto::parseHeader(header_buffer.data(), header)) {
             std::cerr << "Error: Invalid packet header" << std::endl;
             break;
         }
@@ -115,7 +115,7 @@ void RemoteServer::handleClient(int client_socket) {
         
         // Обрабатываем сообщение
         switch (header.type) {
-            case Protocol::MessageType::COMMAND: {
+            case RemoteProto::MessageType::COMMAND: {
                 std::string command(payload.begin(), payload.end());
                 std::cout << "Executing: " << command << std::endl;
                 
@@ -123,7 +123,7 @@ void RemoteServer::handleClient(int client_socket) {
                 
                 // Формируем ответ: exit_code + output
                 std::string response = std::to_string(result.exit_code) + "\n" + result.output;
-                auto packet = Protocol::createPacket(Protocol::MessageType::RESPONSE, response);
+                auto packet = RemoteProto::createPacket(RemoteProto::MessageType::RESPONSE, response);
                 
                 if (!sendAll(client_socket, packet.data(), packet.size())) {
                     goto cleanup;
@@ -131,13 +131,13 @@ void RemoteServer::handleClient(int client_socket) {
                 break;
             }
             
-            case Protocol::MessageType::HEARTBEAT: {
-                auto packet = Protocol::createPacket(Protocol::MessageType::HEARTBEAT, "pong");
+            case RemoteProto::MessageType::HEARTBEAT: {
+                auto packet = RemoteProto::createPacket(RemoteProto::MessageType::HEARTBEAT, "pong");
                 sendAll(client_socket, packet.data(), packet.size());
                 break;
             }
             
-            case Protocol::MessageType::DISCONNECT:
+            case RemoteProto::MessageType::DISCONNECT:
                 goto cleanup;
                 
             default:

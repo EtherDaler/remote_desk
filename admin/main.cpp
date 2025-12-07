@@ -25,7 +25,7 @@ void printHelp() {
               << std::endl;
 }
 
-void printAgents(const std::vector<Protocol::AgentInfo>& agents) {
+void printAgents(const std::vector<RemoteProto::AgentInfo>& agents) {
     if (agents.empty()) {
         std::cout << "\nNo agents connected.\n" << std::endl;
         return;

@@ -85,15 +85,15 @@ void RelayServer::acceptConnections() {
 
 void RelayServer::handleConnection(int client_socket) {
     // Ждём первый пакет для определения типа клиента
-    std::vector<uint8_t> header_buffer(Protocol::HEADER_SIZE);
+    std::vector<uint8_t> header_buffer(RemoteProto::HEADER_SIZE);
     
-    if (!recvAll(client_socket, header_buffer.data(), Protocol::HEADER_SIZE)) {
+    if (!recvAll(client_socket, header_buffer.data(), RemoteProto::HEADER_SIZE)) {
         close(client_socket);
         return;
     }
     
-    Protocol::PacketHeader header;
-    if (!Protocol::parseHeader(header_buffer.data(), header)) {
+    RemoteProto::PacketHeader header;
+    if (!RemoteProto::parseHeader(header_buffer.data(), header)) {
         close(client_socket);
         return;
     }
@@ -108,14 +108,14 @@ void RelayServer::handleConnection(int client_socket) {
     
     std::string payload_str(payload.begin(), payload.end());
     
-    if (header.type == Protocol::MessageType::AGENT_REGISTER) {
+    if (header.type == RemoteProto::MessageType::AGENT_REGISTER) {
         // Агент регистрируется: payload = "id|name|os"
-        auto info = Protocol::AgentInfo::deserialize(payload_str + "|1");
+        auto info = RemoteProto::AgentInfo::deserialize(payload_str + "|1");
         
         std::cout << "[RELAY] Agent registered: " << info.name << " (" << info.id << ")" << std::endl;
         
         // Отправляем подтверждение
-        sendPacket(client_socket, static_cast<uint8_t>(Protocol::MessageType::AGENT_REGISTERED), "OK");
+        sendPacket(client_socket, static_cast<uint8_t>(RemoteProto::MessageType::AGENT_REGISTERED), "OK");
         
         // Добавляем в список
         {
@@ -131,11 +131,11 @@ void RelayServer::handleConnection(int client_socket) {
         
         handleAgent(client_socket, info.id);
         
-    } else if (header.type == Protocol::MessageType::ADMIN_AUTH) {
+    } else if (header.type == RemoteProto::MessageType::ADMIN_AUTH) {
         // Админ авторизуется: payload = token
         if (payload_str == m_admin_token) {
             std::cout << "[RELAY] Admin authenticated" << std::endl;
-            sendPacket(client_socket, static_cast<uint8_t>(Protocol::MessageType::ADMIN_AUTHED), "OK");
+            sendPacket(client_socket, static_cast<uint8_t>(RemoteProto::MessageType::ADMIN_AUTHED), "OK");
             
             {
                 std::lock_guard<std::mutex> lock(m_admins_mutex);
@@ -147,7 +147,7 @@ void RelayServer::handleConnection(int client_socket) {
             handleAdmin(client_socket);
         } else {
             std::cout << "[RELAY] Admin auth failed" << std::endl;
-            sendPacket(client_socket, static_cast<uint8_t>(Protocol::MessageType::ERROR), "Invalid token");
+            sendPacket(client_socket, static_cast<uint8_t>(RemoteProto::MessageType::ERROR), "Invalid token");
             close(client_socket);
         }
     } else {
@@ -157,17 +157,17 @@ void RelayServer::handleConnection(int client_socket) {
 }
 
 void RelayServer::handleAgent(int client_socket, const std::string& agent_id) {
-    std::vector<uint8_t> header_buffer(Protocol::HEADER_SIZE);
+    std::vector<uint8_t> header_buffer(RemoteProto::HEADER_SIZE);
     
     while (m_running) {
         // Агент просто держит соединение и отвечает на команды
         // Команды приходят от relay, когда админ их отправляет
-        if (!recvAll(client_socket, header_buffer.data(), Protocol::HEADER_SIZE)) {
+        if (!recvAll(client_socket, header_buffer.data(), RemoteProto::HEADER_SIZE)) {
             break;
         }
         
-        Protocol::PacketHeader header;
-        if (!Protocol::parseHeader(header_buffer.data(), header)) {
+        RemoteProto::PacketHeader header;
+        if (!RemoteProto::parseHeader(header_buffer.data(), header)) {
             break;
         }
         
@@ -178,9 +178,9 @@ void RelayServer::handleAgent(int client_socket, const std::string& agent_id) {
             }
         }
         
-        if (header.type == Protocol::MessageType::HEARTBEAT) {
-            sendPacket(client_socket, static_cast<uint8_t>(Protocol::MessageType::HEARTBEAT), "pong");
-        } else if (header.type == Protocol::MessageType::DISCONNECT) {
+        if (header.type == RemoteProto::MessageType::HEARTBEAT) {
+            sendPacket(client_socket, static_cast<uint8_t>(RemoteProto::MessageType::HEARTBEAT), "pong");
+        } else if (header.type == RemoteProto::MessageType::DISCONNECT) {
             break;
         }
         // RESPONSE обрабатывается в forwardCommandToAgent
@@ -196,7 +196,7 @@ void RelayServer::handleAgent(int client_socket, const std::string& agent_id) {
 }
 
 void RelayServer::handleAdmin(int client_socket) {
-    std::vector<uint8_t> header_buffer(Protocol::HEADER_SIZE);
+    std::vector<uint8_t> header_buffer(RemoteProto::HEADER_SIZE);
     std::shared_ptr<ConnectedAdmin> admin;
     
     {
@@ -205,12 +205,12 @@ void RelayServer::handleAdmin(int client_socket) {
     }
     
     while (m_running) {
-        if (!recvAll(client_socket, header_buffer.data(), Protocol::HEADER_SIZE)) {
+        if (!recvAll(client_socket, header_buffer.data(), RemoteProto::HEADER_SIZE)) {
             break;
         }
         
-        Protocol::PacketHeader header;
-        if (!Protocol::parseHeader(header_buffer.data(), header)) {
+        RemoteProto::PacketHeader header;
+        if (!RemoteProto::parseHeader(header_buffer.data(), header)) {
             break;
         }
         
@@ -224,41 +224,41 @@ void RelayServer::handleAdmin(int client_socket) {
         std::string payload_str(payload.begin(), payload.end());
         
         switch (header.type) {
-            case Protocol::MessageType::LIST_AGENTS: {
+            case RemoteProto::MessageType::LIST_AGENTS: {
                 std::string list = getAgentsList();
-                sendPacket(client_socket, static_cast<uint8_t>(Protocol::MessageType::AGENTS_LIST), list);
+                sendPacket(client_socket, static_cast<uint8_t>(RemoteProto::MessageType::AGENTS_LIST), list);
                 break;
             }
             
-            case Protocol::MessageType::SELECT_AGENT: {
+            case RemoteProto::MessageType::SELECT_AGENT: {
                 std::lock_guard<std::mutex> lock(m_agents_mutex);
                 if (m_agents.find(payload_str) != m_agents.end()) {
                     admin->selected_agent_id = payload_str;
-                    sendPacket(client_socket, static_cast<uint8_t>(Protocol::MessageType::AGENT_SELECTED), payload_str);
+                    sendPacket(client_socket, static_cast<uint8_t>(RemoteProto::MessageType::AGENT_SELECTED), payload_str);
                     std::cout << "[RELAY] Admin selected agent: " << payload_str << std::endl;
                 } else {
-                    sendPacket(client_socket, static_cast<uint8_t>(Protocol::MessageType::AGENT_OFFLINE), payload_str);
+                    sendPacket(client_socket, static_cast<uint8_t>(RemoteProto::MessageType::AGENT_OFFLINE), payload_str);
                 }
                 break;
             }
             
-            case Protocol::MessageType::COMMAND: {
+            case RemoteProto::MessageType::COMMAND: {
                 if (admin->selected_agent_id.empty()) {
-                    sendPacket(client_socket, static_cast<uint8_t>(Protocol::MessageType::ERROR), "No agent selected");
+                    sendPacket(client_socket, static_cast<uint8_t>(RemoteProto::MessageType::ERROR), "No agent selected");
                     break;
                 }
                 
                 std::string response;
                 if (forwardCommandToAgent(admin->selected_agent_id, payload_str, response)) {
-                    sendPacket(client_socket, static_cast<uint8_t>(Protocol::MessageType::RESPONSE), response);
+                    sendPacket(client_socket, static_cast<uint8_t>(RemoteProto::MessageType::RESPONSE), response);
                 } else {
-                    sendPacket(client_socket, static_cast<uint8_t>(Protocol::MessageType::AGENT_OFFLINE), admin->selected_agent_id);
+                    sendPacket(client_socket, static_cast<uint8_t>(RemoteProto::MessageType::AGENT_OFFLINE), admin->selected_agent_id);
                     admin->selected_agent_id.clear();
                 }
                 break;
             }
             
-            case Protocol::MessageType::DISCONNECT:
+            case RemoteProto::MessageType::DISCONNECT:
                 goto cleanup;
                 
             default:
@@ -280,7 +280,7 @@ std::string RelayServer::getAgentsList() {
     std::string result;
     
     for (const auto& [id, agent] : m_agents) {
-        Protocol::AgentInfo info;
+        RemoteProto::AgentInfo info;
         info.id = agent->id;
         info.name = agent->name;
         info.os = agent->os;
@@ -310,18 +310,18 @@ bool RelayServer::forwardCommandToAgent(const std::string& agent_id, const std::
     std::lock_guard<std::mutex> lock(agent->socket_mutex);
     
     // Отправляем команду агенту
-    if (!sendPacket(agent->socket, static_cast<uint8_t>(Protocol::MessageType::COMMAND), command)) {
+    if (!sendPacket(agent->socket, static_cast<uint8_t>(RemoteProto::MessageType::COMMAND), command)) {
         return false;
     }
     
     // Ждём ответ
-    std::vector<uint8_t> header_buffer(Protocol::HEADER_SIZE);
-    if (!recvAll(agent->socket, header_buffer.data(), Protocol::HEADER_SIZE)) {
+    std::vector<uint8_t> header_buffer(RemoteProto::HEADER_SIZE);
+    if (!recvAll(agent->socket, header_buffer.data(), RemoteProto::HEADER_SIZE)) {
         return false;
     }
     
-    Protocol::PacketHeader header;
-    if (!Protocol::parseHeader(header_buffer.data(), header)) {
+    RemoteProto::PacketHeader header;
+    if (!RemoteProto::parseHeader(header_buffer.data(), header)) {
         return false;
     }
     
@@ -357,7 +357,7 @@ bool RelayServer::recvAll(int socket, uint8_t* data, size_t size) {
 }
 
 bool RelayServer::sendPacket(int socket, uint8_t msg_type, const std::string& payload) {
-    auto packet = Protocol::createPacket(static_cast<Protocol::MessageType>(msg_type), payload);
+    auto packet = RemoteProto::createPacket(static_cast<RemoteProto::MessageType>(msg_type), payload);
     return sendAll(socket, packet.data(), packet.size());
 }
 

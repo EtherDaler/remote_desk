@@ -16,7 +16,7 @@ public:
     void disconnect();
     
     // Получение списка агентов
-    std::vector<Protocol::AgentInfo> listAgents();
+    std::vector<RemoteProto::AgentInfo> listAgents();
     
     // Выбор агента для управления
     bool selectAgent(const std::string& agent_id);
@@ -33,7 +33,7 @@ private:
     bool sendAll(const uint8_t* data, size_t size);
     bool recvAll(uint8_t* data, size_t size);
     bool sendPacket(uint8_t msg_type, const std::string& payload);
-    bool recvPacket(Protocol::PacketHeader& header, std::vector<uint8_t>& payload);
+    bool recvPacket(RemoteProto::PacketHeader& header, std::vector<uint8_t>& payload);
     
     int m_socket;
     std::string m_selected_agent;

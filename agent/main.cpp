@@ -1,16 +1,22 @@
 #include "agent.h"
 
 #include <iostream>
-#include <csignal>
-#include <memory>
+#include <string>
 #include <random>
 #include <fstream>
-#include <sys/stat.h>
-#include <unistd.h>
+
+#ifdef _WIN32
+    #define WIN32_LEAN_AND_MEAN
+    #include <windows.h>
+    #include <csignal>
+#else
+    #include <csignal>
+    #include <unistd.h>
+#endif
 
 std::unique_ptr<RemoteAgent> g_agent;
 
-void signalHandler(int signal) {
+void signalHandler(int) {
     std::cout << "\n[AGENT] Shutting down..." << std::endl;
     if (g_agent) {
         g_agent->stop();
@@ -34,20 +40,37 @@ std::string generateId() {
 
 // Получение имени хоста
 std::string getHostname() {
+#ifdef _WIN32
+    char hostname[256];
+    DWORD size = sizeof(hostname);
+    if (GetComputerNameA(hostname, &size)) {
+        return hostname;
+    }
+    return "unknown-windows";
+#else
     char hostname[256];
     if (gethostname(hostname, sizeof(hostname)) == 0) {
         return hostname;
     }
     return "unknown";
+#endif
 }
 
 // Путь к файлу конфигурации
 std::string getConfigPath() {
+#ifdef _WIN32
+    const char* appdata = getenv("APPDATA");
+    if (appdata) {
+        return std::string(appdata) + "\\desktop_remote_agent.id";
+    }
+    return "desktop_remote_agent.id";
+#else
     const char* home = getenv("HOME");
     if (home) {
         return std::string(home) + "/.desktop_remote_agent";
     }
     return ".desktop_remote_agent";
+#endif
 }
 
 // Загрузка или генерация ID агента
@@ -149,4 +172,3 @@ int main(int argc, char* argv[]) {
     
     return 0;
 }
-

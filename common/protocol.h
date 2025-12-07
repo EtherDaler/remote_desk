@@ -5,7 +5,7 @@
 #include <vector>
 #include <cstring>
 
-namespace Protocol {
+namespace RemoteProto {
 
 // Типы сообщений
 enum class MessageType : uint8_t {
@@ -39,10 +39,20 @@ enum class ClientType : uint8_t {
 };
 
 // Заголовок пакета
+#ifdef _MSC_VER
+#pragma pack(push, 1)
+#endif
 struct PacketHeader {
     MessageType type;
     uint32_t payload_size;
-} __attribute__((packed));
+}
+#ifdef __GNUC__
+__attribute__((packed))
+#endif
+;
+#ifdef _MSC_VER
+#pragma pack(pop)
+#endif
 
 constexpr size_t HEADER_SIZE = sizeof(PacketHeader);
 constexpr size_t MAX_PAYLOAD_SIZE = 1024 * 1024; // 1MB
@@ -112,4 +122,4 @@ struct AgentInfo {
     }
 };
 
-} // namespace Protocol
+} // namespace RemoteProto

@@ -43,14 +43,14 @@ bool AdminClient::connect(const std::string& host, uint16_t port, const std::str
     }
     
     // Авторизуемся
-    if (!sendPacket(static_cast<uint8_t>(Protocol::MessageType::ADMIN_AUTH), token)) {
+    if (!sendPacket(static_cast<uint8_t>(RemoteProto::MessageType::ADMIN_AUTH), token)) {
         std::cerr << "Error: Failed to send auth" << std::endl;
         close(m_socket);
         m_socket = -1;
         return false;
     }
     
-    Protocol::PacketHeader header;
+    RemoteProto::PacketHeader header;
     std::vector<uint8_t> payload;
     if (!recvPacket(header, payload)) {
         std::cerr << "Error: Failed to receive auth response" << std::endl;
@@ -59,7 +59,7 @@ bool AdminClient::connect(const std::string& host, uint16_t port, const std::str
         return false;
     }
     
-    if (header.type != Protocol::MessageType::ADMIN_AUTHED) {
+    if (header.type != RemoteProto::MessageType::ADMIN_AUTHED) {
         std::string error(payload.begin(), payload.end());
         std::cerr << "Error: Authentication failed - " << error << std::endl;
         close(m_socket);
@@ -72,27 +72,27 @@ bool AdminClient::connect(const std::string& host, uint16_t port, const std::str
 
 void AdminClient::disconnect() {
     if (m_socket >= 0) {
-        sendPacket(static_cast<uint8_t>(Protocol::MessageType::DISCONNECT), "");
+        sendPacket(static_cast<uint8_t>(RemoteProto::MessageType::DISCONNECT), "");
         close(m_socket);
         m_socket = -1;
     }
     m_selected_agent.clear();
 }
 
-std::vector<Protocol::AgentInfo> AdminClient::listAgents() {
-    std::vector<Protocol::AgentInfo> agents;
+std::vector<RemoteProto::AgentInfo> AdminClient::listAgents() {
+    std::vector<RemoteProto::AgentInfo> agents;
     
     if (!isConnected()) return agents;
     
-    sendPacket(static_cast<uint8_t>(Protocol::MessageType::LIST_AGENTS), "");
+    sendPacket(static_cast<uint8_t>(RemoteProto::MessageType::LIST_AGENTS), "");
     
-    Protocol::PacketHeader header;
+    RemoteProto::PacketHeader header;
     std::vector<uint8_t> payload;
     if (!recvPacket(header, payload)) {
         return agents;
     }
     
-    if (header.type != Protocol::MessageType::AGENTS_LIST) {
+    if (header.type != RemoteProto::MessageType::AGENTS_LIST) {
         return agents;
     }
     
@@ -102,7 +102,7 @@ std::vector<Protocol::AgentInfo> AdminClient::listAgents() {
     
     while (std::getline(stream, line)) {
         if (!line.empty()) {
-            agents.push_back(Protocol::AgentInfo::deserialize(line));
+            agents.push_back(RemoteProto::AgentInfo::deserialize(line));
         }
     }
     
@@ -112,18 +112,18 @@ std::vector<Protocol::AgentInfo> AdminClient::listAgents() {
 bool AdminClient::selectAgent(const std::string& agent_id) {
     if (!isConnected()) return false;
     
-    sendPacket(static_cast<uint8_t>(Protocol::MessageType::SELECT_AGENT), agent_id);
+    sendPacket(static_cast<uint8_t>(RemoteProto::MessageType::SELECT_AGENT), agent_id);
     
-    Protocol::PacketHeader header;
+    RemoteProto::PacketHeader header;
     std::vector<uint8_t> payload;
     if (!recvPacket(header, payload)) {
         return false;
     }
     
-    if (header.type == Protocol::MessageType::AGENT_SELECTED) {
+    if (header.type == RemoteProto::MessageType::AGENT_SELECTED) {
         m_selected_agent = agent_id;
         return true;
-    } else if (header.type == Protocol::MessageType::AGENT_OFFLINE) {
+    } else if (header.type == RemoteProto::MessageType::AGENT_OFFLINE) {
         std::cerr << "Agent is offline" << std::endl;
         return false;
     }
@@ -140,20 +140,20 @@ std::string AdminClient::executeCommand(const std::string& command) {
         return "Error: No agent selected";
     }
     
-    sendPacket(static_cast<uint8_t>(Protocol::MessageType::COMMAND), command);
+    sendPacket(static_cast<uint8_t>(RemoteProto::MessageType::COMMAND), command);
     
-    Protocol::PacketHeader header;
+    RemoteProto::PacketHeader header;
     std::vector<uint8_t> payload;
     if (!recvPacket(header, payload)) {
         return "Error: Failed to receive response";
     }
     
-    if (header.type == Protocol::MessageType::AGENT_OFFLINE) {
+    if (header.type == RemoteProto::MessageType::AGENT_OFFLINE) {
         m_selected_agent.clear();
         return "Error: Agent went offline";
     }
     
-    if (header.type == Protocol::MessageType::ERROR) {
+    if (header.type == RemoteProto::MessageType::ERROR) {
         return "Error: " + std::string(payload.begin(), payload.end());
     }
     
@@ -181,17 +181,17 @@ bool AdminClient::recvAll(uint8_t* data, size_t size) {
 }
 
 bool AdminClient::sendPacket(uint8_t msg_type, const std::string& payload) {
-    auto packet = Protocol::createPacket(static_cast<Protocol::MessageType>(msg_type), payload);
+    auto packet = RemoteProto::createPacket(static_cast<RemoteProto::MessageType>(msg_type), payload);
     return sendAll(packet.data(), packet.size());
 }
 
-bool AdminClient::recvPacket(Protocol::PacketHeader& header, std::vector<uint8_t>& payload) {
-    std::vector<uint8_t> header_buffer(Protocol::HEADER_SIZE);
-    if (!recvAll(header_buffer.data(), Protocol::HEADER_SIZE)) {
+bool AdminClient::recvPacket(RemoteProto::PacketHeader& header, std::vector<uint8_t>& payload) {
+    std::vector<uint8_t> header_buffer(RemoteProto::HEADER_SIZE);
+    if (!recvAll(header_buffer.data(), RemoteProto::HEADER_SIZE)) {
         return false;
     }
     
-    if (!Protocol::parseHeader(header_buffer.data(), header)) {
+    if (!RemoteProto::parseHeader(header_buffer.data(), header)) {
         return false;
     }
     

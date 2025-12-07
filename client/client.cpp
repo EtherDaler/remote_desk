@@ -53,7 +53,7 @@ bool RemoteClient::connect(const std::string& host, uint16_t port) {
 void RemoteClient::disconnect() {
     if (m_socket >= 0) {
         // Отправляем сообщение об отключении
-        auto packet = Protocol::createPacket(Protocol::MessageType::DISCONNECT, "");
+        auto packet = RemoteProto::createPacket(RemoteProto::MessageType::DISCONNECT, "");
         sendAll(packet.data(), packet.size());
         
         close(m_socket);
@@ -67,19 +67,19 @@ std::string RemoteClient::executeCommand(const std::string& command) {
     }
     
     // Отправляем команду
-    auto packet = Protocol::createPacket(Protocol::MessageType::COMMAND, command);
+    auto packet = RemoteProto::createPacket(RemoteProto::MessageType::COMMAND, command);
     if (!sendAll(packet.data(), packet.size())) {
         return "Error: Failed to send command";
     }
     
     // Получаем заголовок ответа
-    std::vector<uint8_t> header_buffer(Protocol::HEADER_SIZE);
-    if (!recvAll(header_buffer.data(), Protocol::HEADER_SIZE)) {
+    std::vector<uint8_t> header_buffer(RemoteProto::HEADER_SIZE);
+    if (!recvAll(header_buffer.data(), RemoteProto::HEADER_SIZE)) {
         return "Error: Failed to receive response header";
     }
     
-    Protocol::PacketHeader header;
-    if (!Protocol::parseHeader(header_buffer.data(), header)) {
+    RemoteProto::PacketHeader header;
+    if (!RemoteProto::parseHeader(header_buffer.data(), header)) {
         return "Error: Invalid response header";
     }
     

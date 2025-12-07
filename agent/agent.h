@@ -2,7 +2,13 @@
 
 #include <string>
 #include <atomic>
-#include <thread>
+#include <memory>
+
+#ifdef _WIN32
+    #include <cstdint>
+#else
+    #include <cstdint>
+#endif
 
 class RemoteAgent {
 public:
@@ -40,4 +46,3 @@ private:
     std::atomic<bool> m_running;
     std::atomic<bool> m_connected;
 };
-
