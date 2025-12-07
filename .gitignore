@@ -1,0 +1,39 @@
+# Бинарники
+relay_server
+remote_agent
+admin_client
+remote_server
+remote_client
+*.exe
+
+# Архивы с исходниками
+*.tar.gz
+*.zip
+
+# Директория сборки
+build/
+cmake-build-*/
+
+# Объектные файлы
+*.o
+*.obj
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# macOS
+.DS_Store
+
+# Windows
+Thumbs.db
+*.pdb
+*.ilk
+
+# Конфигурация агента (содержит ID)
+.desktop_remote_agent
+desktop_remote_agent.id
+
