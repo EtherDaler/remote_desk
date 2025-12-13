@@ -4,12 +4,16 @@
 #include <string>
 #include <random>
 #include <fstream>
+#include <sstream>
 
 #ifdef _WIN32
     #define WIN32_LEAN_AND_MEAN
     #include <windows.h>
     #include <shellapi.h>
     #include <csignal>
+    
+    // Для запуска без консоли
+    #pragma comment(linker, "/SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup")
 #else
     #include <csignal>
     #include <unistd.h>

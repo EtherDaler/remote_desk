@@ -43,12 +43,16 @@ bool AdminClient::connect(const std::string& host, uint16_t port, const std::str
         return false;
     }
     
-    // Устанавливаем таймаут на сокет (60 секунд)
+    // Устанавливаем таймаут на сокет (120 секунд для скриншотов)
     struct timeval tv;
-    tv.tv_sec = 60;
+    tv.tv_sec = 120;
     tv.tv_usec = 0;
     setsockopt(m_socket, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
     setsockopt(m_socket, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+    
+    // Включаем TCP keepalive
+    int keepalive = 1;
+    setsockopt(m_socket, SOL_SOCKET, SO_KEEPALIVE, &keepalive, sizeof(keepalive));
     
     // Авторизуемся
     if (!sendPacket(static_cast<uint8_t>(RemoteProto::MessageType::ADMIN_AUTH), token)) {

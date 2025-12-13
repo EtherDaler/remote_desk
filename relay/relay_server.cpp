@@ -85,12 +85,16 @@ void RelayServer::acceptConnections() {
         inet_ntop(AF_INET, &client_addr.sin_addr, client_ip, INET_ADDRSTRLEN);
         std::cout << "[RELAY] New connection from: " << client_ip << std::endl;
         
-        // Устанавливаем таймаут на сокет (60 секунд для команд)
+        // Устанавливаем таймаут на сокет (120 секунд для скриншотов)
         struct timeval tv;
-        tv.tv_sec = 60;
+        tv.tv_sec = 120;
         tv.tv_usec = 0;
         setsockopt(client_socket, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
         setsockopt(client_socket, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+        
+        // Включаем TCP keepalive
+        int keepalive = 1;
+        setsockopt(client_socket, SOL_SOCKET, SO_KEEPALIVE, &keepalive, sizeof(keepalive));
         
         std::thread(&RelayServer::handleConnection, this, client_socket, std::string(client_ip)).detach();
     }
