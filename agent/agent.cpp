@@ -385,10 +385,14 @@ bool RemoteAgent::sendPacket(uint8_t msg_type, const std::string& payload) {
 
 bool RemoteAgent::lockInput() {
 #ifdef _WIN32
-    // Windows: BlockInput отключён из-за проблем со стабильностью
-    // Используем альтернативный метод - просто отмечаем состояние
+    // Windows: пытаемся заблокировать ввод через BlockInput (требуются права администратора)
+    BOOL ok = BlockInput(TRUE);
     m_input_locked = true;
-    std::cout << "[AGENT] Input lock enabled (Windows - noted)" << std::endl;
+    if (ok) {
+        std::cout << "[AGENT] Input locked (Windows BlockInput)" << std::endl;
+    } else {
+        std::cout << "[AGENT] BlockInput failed (need admin?), state flagged locked anyway" << std::endl;
+    }
     return true;
 #elif defined(__APPLE__)
     // macOS: используем системные события для блокировки
@@ -442,8 +446,9 @@ bool RemoteAgent::lockInput() {
 
 bool RemoteAgent::unlockInput() {
 #ifdef _WIN32
+    BlockInput(FALSE); // Пытаемся снять блокировку, даже если возвращает ошибку
     m_input_locked = false;
-    std::cout << "[AGENT] Input unlock enabled (Windows - noted)" << std::endl;
+    std::cout << "[AGENT] Input unlocked (Windows)" << std::endl;
     return true;
 #elif defined(__APPLE__)
     // Останавливаем фоновый процесс блокировки
