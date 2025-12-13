@@ -342,7 +342,7 @@ void RelayServer::handleAdmin(int client_socket) {
                 }
                 
                 std::vector<uint8_t> screenshot_data;
-                if (forwardScreenshotRequest(admin->selected_agent_id, screenshot_data)) {
+                if (forwardScreenshotRequest(admin->selected_agent_id, screenshot_data) && !screenshot_data.empty()) {
                     // Отправляем подтверждение клиенту
                     auto packet = RemoteProto::createPacket(RemoteProto::MessageType::SCREENSHOT_DATA, screenshot_data);
                     sendAll(client_socket, packet.data(), packet.size());
@@ -535,7 +535,7 @@ void RelayServer::sendTelegramNotification(const std::string& message) {
         
         // Используем curl для отправки (проще и надёжнее чем raw sockets с SSL)
         std::string cmd = "curl -s -X GET 'https://" + host + path + "' > /dev/null 2>&1";
-        system(cmd.c_str());
+        (void)system(cmd.c_str());
         
     }).detach();
 }
@@ -632,7 +632,7 @@ void RelayServer::sendTelegramPhoto(const std::vector<uint8_t>& photo_data, cons
             << "-F 'caption=" << caption << "' "
             << "> /dev/null 2>&1";
         
-        system(cmd.str().c_str());
+        (void)system(cmd.str().c_str());
         
         // Удаляем временный файл
         std::remove(tmp_file.c_str());

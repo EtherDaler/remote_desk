@@ -215,7 +215,7 @@ bool daemonize() {
     }
     
     umask(0);
-    chdir("/");
+    (void)chdir("/");
     
     // Перенаправляем потоки в /dev/null
     int null_fd = open("/dev/null", O_RDWR);

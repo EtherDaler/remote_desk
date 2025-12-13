@@ -66,7 +66,7 @@ void killProcessOnPort(uint16_t port) {
         // Fallback на lsof
         cmd.str("");
         cmd << "lsof -ti :" << port << " | xargs kill -9 2>/dev/null";
-        system(cmd.str().c_str());
+        (void)system(cmd.str().c_str());
     }
     
     // Даём время на освобождение порта
@@ -109,7 +109,7 @@ bool daemonize() {
     }
     
     umask(0);
-    chdir("/");
+    (void)chdir("/");
     
     int null_fd = open("/dev/null", O_RDWR);
     if (null_fd >= 0) {

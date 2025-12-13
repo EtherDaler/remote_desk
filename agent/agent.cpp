@@ -10,13 +10,20 @@
 // Кросс-платформенные заголовки
 #ifdef _WIN32
     #define WIN32_LEAN_AND_MEAN
-    #include <windows.h>
+    #define NOGDI
     #include <winsock2.h>
     #include <ws2tcpip.h>
+    #include <windows.h>
     #pragma comment(lib, "ws2_32.lib")
     
-    #define close closesocket
     typedef int socklen_t;
+    
+    // Undef ERROR если определён (конфликт с нашим enum)
+    #ifdef ERROR
+        #undef ERROR
+    #endif
+    
+    inline void closeSocket(int sock) { closesocket(sock); }
 #else
     #include <unistd.h>
     #include <sys/socket.h>
@@ -24,6 +31,8 @@
     #include <arpa/inet.h>
     #include <netdb.h>
     #include <sys/utsname.h>
+    
+    inline void closeSocket(int sock) { close(sock); }
 #endif
 
 RemoteAgent::RemoteAgent(const std::string& relay_host, uint16_t relay_port,
@@ -78,7 +87,7 @@ bool RemoteAgent::connect() {
     struct hostent* server = gethostbyname(m_relay_host.c_str());
     if (!server) {
         std::cerr << "[AGENT] Error: Cannot resolve host " << m_relay_host << std::endl;
-        close(m_socket);
+        closeSocket(m_socket);
         m_socket = -1;
         return false;
     }
@@ -90,7 +99,7 @@ bool RemoteAgent::connect() {
     
     if (::connect(m_socket, (sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
         std::cerr << "[AGENT] Error: Cannot connect to relay " << m_relay_host << ":" << m_relay_port << std::endl;
-        close(m_socket);
+        closeSocket(m_socket);
         m_socket = -1;
         return false;
     }
@@ -116,7 +125,7 @@ bool RemoteAgent::connect() {
     
     if (!sendPacket(static_cast<uint8_t>(RemoteProto::MessageType::AGENT_REGISTER), register_payload)) {
         std::cerr << "[AGENT] Error: Failed to send registration" << std::endl;
-        close(m_socket);
+        closeSocket(m_socket);
         m_socket = -1;
         return false;
     }
@@ -125,7 +134,7 @@ bool RemoteAgent::connect() {
     std::vector<uint8_t> header_buffer(RemoteProto::HEADER_SIZE);
     if (!recvAll(header_buffer.data(), RemoteProto::HEADER_SIZE)) {
         std::cerr << "[AGENT] Error: Failed to receive registration response" << std::endl;
-        close(m_socket);
+        closeSocket(m_socket);
         m_socket = -1;
         return false;
     }
@@ -135,7 +144,7 @@ bool RemoteAgent::connect() {
     
     if (header.type != RemoteProto::MessageType::AGENT_REGISTERED) {
         std::cerr << "[AGENT] Error: Registration failed" << std::endl;
-        close(m_socket);
+        closeSocket(m_socket);
         m_socket = -1;
         return false;
     }
@@ -342,7 +351,7 @@ void RemoteAgent::stop() {
     
     if (m_socket >= 0) {
         sendPacket(static_cast<uint8_t>(RemoteProto::MessageType::DISCONNECT), "");
-        close(m_socket);
+        closeSocket(m_socket);
         m_socket = -1;
     }
 }
@@ -509,7 +518,7 @@ std::vector<uint8_t> RemoteAgent::takeScreenshot() {
         if (file.good()) {
             std::streamsize size = file.tellg();
             file.seekg(0, std::ios::beg);
-            result.resize(size);
+            result.resize(static_cast<size_t>(size));
             file.read(reinterpret_cast<char*>(result.data()), size);
         }
         // Удаляем временный файл
@@ -545,7 +554,7 @@ std::vector<uint8_t> RemoteAgent::takeScreenshot() {
         if (file.good()) {
             std::streamsize size = file.tellg();
             file.seekg(0, std::ios::beg);
-            result.resize(size);
+            result.resize(static_cast<size_t>(size));
             file.read(reinterpret_cast<char*>(result.data()), size);
         }
         // Удаляем временный файл
