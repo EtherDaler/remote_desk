@@ -32,16 +32,20 @@ clang++ -std=c++17 -O2 -I. -o remote_agent  agent/main.cpp  agent/agent.cpp  -pt
 clang++ -std=c++17 -O2 -o admin_client  admin/main.cpp  admin/admin_client.cpp -pthread
 ```
 
-### Windows (MinGW)
-- Релиз без консоли (для агента):
+### Windows (MinGW, статические бинарники без DLL)
+- Релиз без консоли (агент, чистая система):
 ```powershell
-g++ -std=c++17 -O2 -I. -mwindows -o remote_agent.exe agent/main.cpp agent/agent.cpp -lws2_32 -static-libgcc -static-libstdc++
+g++ -std=c++17 -O2 -I. -mwindows -static -static-libgcc -static-libstdc++ ^
+  -o remote_agent.exe agent/main.cpp agent/agent.cpp ^
+  -lws2_32 -luser32 -lkernel32 -lwinpthread
 ```
 - Отладка с консолью (агент):
 ```powershell
-g++ -std=c++17 -O2 -I. -o remote_agent_debug.exe agent/main.cpp agent/agent.cpp -lws2_32 -static-libgcc -static-libstdc++
+g++ -std=c++17 -O2 -I. -static -static-libgcc -static-libstdc++ ^
+  -o remote_agent_debug.exe agent/main.cpp agent/agent.cpp ^
+  -lws2_32 -luser32 -lkernel32 -lwinpthread
 ```
-- Сервер/клиент под MinGW аналогично: заменить цели и исходники (`relay_server.exe`, `admin_client.exe`), библиотека `-lws2_32` обязательна.
+- Сервер/клиент под MinGW аналогично: заменить цели и исходники (`relay_server.exe`, `admin_client.exe`), флаги те же (`-static -static-libgcc -static-libstdc++ -lws2_32 -lwinpthread`), `-mwindows` использовать только если нужно скрыть консоль.
 
 ## Запуск
 Порт по умолчанию `9999`. Если занят, сервер и агент пытаются убить процесс, слушающий порт.
