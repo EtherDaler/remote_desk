@@ -7,7 +7,7 @@
 
 AdminClient* g_client = nullptr;
 
-void signalHandler(int signal) {
+void signalHandler(int) {
     std::cout << "\nDisconnecting..." << std::endl;
     if (g_client) {
         g_client->disconnect();

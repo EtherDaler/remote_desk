@@ -13,9 +13,7 @@
     #include <windows.h>
     #include <winsock2.h>
     #include <ws2tcpip.h>
-    #include <gdiplus.h>
     #pragma comment(lib, "ws2_32.lib")
-    #pragma comment(lib, "gdiplus.lib")
     
     #define close closesocket
     typedef int socklen_t;
@@ -462,53 +460,42 @@ std::vector<uint8_t> RemoteAgent::takeScreenshot() {
     std::vector<uint8_t> result;
     
 #ifdef _WIN32
-    // Windows: используем GDI+ для создания скриншота
-    Gdiplus::GdiplusStartupInput gdiplusStartupInput;
-    ULONG_PTR gdiplusToken;
-    Gdiplus::GdiplusStartup(&gdiplusToken, &gdiplusStartupInput, NULL);
+    // Windows: используем PowerShell для создания скриншота
+    // Это более универсальный метод, работающий с MinGW и MSVC
     
-    // Получаем размеры экрана
-    int screenWidth = GetSystemMetrics(SM_CXSCREEN);
-    int screenHeight = GetSystemMetrics(SM_CYSCREEN);
+    // Получаем путь к временной папке
+    char temp_path[MAX_PATH];
+    GetTempPathA(MAX_PATH, temp_path);
+    std::string tmp_file = std::string(temp_path) + "screenshot_" + std::to_string(GetCurrentProcessId()) + ".png";
     
-    // Создаём DC и битмап
-    HDC hdcScreen = GetDC(NULL);
-    HDC hdcMem = CreateCompatibleDC(hdcScreen);
-    HBITMAP hBitmap = CreateCompatibleBitmap(hdcScreen, screenWidth, screenHeight);
-    SelectObject(hdcMem, hBitmap);
+    // PowerShell скрипт для создания скриншота
+    std::string ps_script = 
+        "Add-Type -AssemblyName System.Windows.Forms;"
+        "[System.Windows.Forms.Screen]::PrimaryScreen | ForEach-Object {"
+        "  $bitmap = New-Object System.Drawing.Bitmap($_.Bounds.Width, $_.Bounds.Height);"
+        "  $graphics = [System.Drawing.Graphics]::FromImage($bitmap);"
+        "  $graphics.CopyFromScreen($_.Bounds.Location, [System.Drawing.Point]::Empty, $_.Bounds.Size);"
+        "  $bitmap.Save('" + tmp_file + "');"
+        "  $graphics.Dispose();"
+        "  $bitmap.Dispose();"
+        "}";
     
-    // Копируем экран
-    BitBlt(hdcMem, 0, 0, screenWidth, screenHeight, hdcScreen, 0, 0, SRCCOPY);
+    std::string cmd = "powershell -NoProfile -ExecutionPolicy Bypass -Command \"" + ps_script + "\" 2>nul";
+    int ret = system(cmd.c_str());
     
-    // Сохраняем в PNG через GDI+
-    Gdiplus::Bitmap* bitmap = Gdiplus::Bitmap::FromHBITMAP(hBitmap, NULL);
-    
-    // Получаем encoder для PNG
-    CLSID pngClsid;
-    CLSIDFromString(L"{557CF406-1A04-11D3-9A73-0000F81EF32E}", &pngClsid);
-    
-    // Сохраняем в поток
-    IStream* stream = NULL;
-    CreateStreamOnHGlobal(NULL, TRUE, &stream);
-    bitmap->Save(stream, &pngClsid, NULL);
-    
-    // Читаем данные из потока
-    STATSTG stats;
-    stream->Stat(&stats, STATFLAG_NONAME);
-    ULONG size = stats.cbSize.LowPart;
-    
-    result.resize(size);
-    LARGE_INTEGER zero = {0};
-    stream->Seek(zero, STREAM_SEEK_SET, NULL);
-    stream->Read(result.data(), size, NULL);
-    
-    // Очистка
-    stream->Release();
-    delete bitmap;
-    DeleteObject(hBitmap);
-    DeleteDC(hdcMem);
-    ReleaseDC(NULL, hdcScreen);
-    Gdiplus::GdiplusShutdown(gdiplusToken);
+    if (ret == 0) {
+        // Читаем файл
+        std::ifstream file(tmp_file, std::ios::binary | std::ios::ate);
+        if (file.good()) {
+            std::streamsize size = file.tellg();
+            file.seekg(0, std::ios::beg);
+            result.resize(static_cast<size_t>(size));
+            file.read(reinterpret_cast<char*>(result.data()), size);
+        }
+        file.close();
+        // Удаляем временный файл
+        DeleteFileA(tmp_file.c_str());
+    }
     
 #elif defined(__APPLE__)
     // macOS: используем screencapture
