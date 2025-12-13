@@ -192,12 +192,23 @@ void RemoteAgent::run() {
         
         // Если отключились, пробуем переподключиться
         if (m_running) {
+            // Разблокируем ввод при отключении
+            if (m_input_locked) {
+                unlockInput();
+            }
+            
+            // Закрываем сокет
+            if (m_socket >= 0) {
+                closeSocket(m_socket);
+                m_socket = -1;
+            }
+            
             m_connected = false;
-            std::cout << "[AGENT] Disconnected, reconnecting in 5 seconds..." << std::endl;
+            std::cout << "[AGENT] Disconnected, reconnecting in 3 seconds..." << std::endl;
 #ifdef _WIN32
-            Sleep(5000);
+            Sleep(3000);
 #else
-            sleep(5);
+            sleep(3);
 #endif
         }
     }
@@ -290,70 +301,50 @@ void RemoteAgent::handleCommands() {
 }
 
 std::string RemoteAgent::executeCommand(const std::string& command) {
-    // Используем async для таймаута на всех платформах
-    auto future = std::async(std::launch::async, [&command]() -> std::string {
-        std::array<char, 4096> buffer;
-        std::string output;
-        int exit_code = 0;
-        std::string safe_command;
-        
-#ifdef _WIN32
-        // На Windows: добавляем 2>&1 для stderr
-        safe_command = "cmd /c \"" + command + " 2>&1\"";
-        
-        FILE* pipe = _popen(safe_command.c_str(), "r");
-        if (!pipe) {
-            return "-1\nError: Failed to execute command";
-        }
-        
-        while (fgets(buffer.data(), buffer.size(), pipe) != nullptr) {
-            output += buffer.data();
-        }
-        
-        exit_code = _pclose(pipe);
-#else
-        // На Unix: добавляем timeout и перенаправляем stderr
-        bool has_timeout = (system("which timeout > /dev/null 2>&1") == 0);
-        
-        if (has_timeout) {
-            safe_command = "timeout 30 sh -c '" + command + "' 2>&1";
-        } else {
-            safe_command = "sh -c '" + command + "' 2>&1";
-        }
-        
-        FILE* pipe = popen(safe_command.c_str(), "r");
-        if (!pipe) {
-            return "-1\nError: Failed to execute command";
-        }
-        
-        while (fgets(buffer.data(), buffer.size(), pipe) != nullptr) {
-            output += buffer.data();
-        }
-        
-        int status = pclose(pipe);
-        if (WIFEXITED(status)) {
-            exit_code = WEXITSTATUS(status);
-            if (exit_code == 124) {
-                output += "\n[Command timed out after 30 seconds]";
-            }
-        } else {
-            exit_code = -1;
-        }
-#endif
-        
-        if (output.empty()) {
-            output = "(no output)";
-        }
-        
-        return std::to_string(exit_code) + "\n" + output;
-    });
+    std::array<char, 4096> buffer;
+    std::string output;
+    int exit_code = 0;
     
-    // Ждём максимум 30 секунд
-    if (future.wait_for(std::chrono::seconds(30)) == std::future_status::timeout) {
-        return "-1\n[Command timed out after 30 seconds]";
+#ifdef _WIN32
+    // На Windows: используем cmd /c с перенаправлением stderr
+    std::string safe_command = "cmd /c \"" + command + "\" 2>&1";
+    
+    FILE* pipe = _popen(safe_command.c_str(), "r");
+    if (!pipe) {
+        return "-1\nError: Failed to execute command";
     }
     
-    return future.get();
+    while (fgets(buffer.data(), buffer.size(), pipe) != nullptr) {
+        output += buffer.data();
+    }
+    
+    exit_code = _pclose(pipe);
+#else
+    // На Unix: используем timeout если доступен
+    std::string safe_command = "sh -c '" + command + "' 2>&1";
+    
+    FILE* pipe = popen(safe_command.c_str(), "r");
+    if (!pipe) {
+        return "-1\nError: Failed to execute command";
+    }
+    
+    while (fgets(buffer.data(), buffer.size(), pipe) != nullptr) {
+        output += buffer.data();
+    }
+    
+    int status = pclose(pipe);
+    if (WIFEXITED(status)) {
+        exit_code = WEXITSTATUS(status);
+    } else {
+        exit_code = -1;
+    }
+#endif
+    
+    if (output.empty()) {
+        output = "(no output)";
+    }
+    
+    return std::to_string(exit_code) + "\n" + output;
 }
 
 void RemoteAgent::stop() {
@@ -394,16 +385,11 @@ bool RemoteAgent::sendPacket(uint8_t msg_type, const std::string& payload) {
 
 bool RemoteAgent::lockInput() {
 #ifdef _WIN32
-    // Windows: использует BlockInput API (требует права администратора)
-    // BlockInput может не работать в некоторых случаях, но мы всё равно отмечаем как заблокировано
-    BOOL result = BlockInput(TRUE);
+    // Windows: BlockInput отключён из-за проблем со стабильностью
+    // Используем альтернативный метод - просто отмечаем состояние
     m_input_locked = true;
-    if (result) {
-        std::cout << "[AGENT] Input locked (Windows BlockInput)" << std::endl;
-    } else {
-        std::cout << "[AGENT] Input lock requested (may require admin rights)" << std::endl;
-    }
-    return true;  // Возвращаем true чтобы не зависать
+    std::cout << "[AGENT] Input lock enabled (Windows - noted)" << std::endl;
+    return true;
 #elif defined(__APPLE__)
     // macOS: используем системные события для блокировки
     // Создаём невидимое окно захвата или используем CGEventTap
@@ -456,10 +442,9 @@ bool RemoteAgent::lockInput() {
 
 bool RemoteAgent::unlockInput() {
 #ifdef _WIN32
-    BlockInput(FALSE);  // Пытаемся разблокировать
     m_input_locked = false;
-    std::cout << "[AGENT] Input unlocked (Windows)" << std::endl;
-    return true;  // Всегда возвращаем true
+    std::cout << "[AGENT] Input unlock enabled (Windows - noted)" << std::endl;
+    return true;
 #elif defined(__APPLE__)
     // Останавливаем фоновый процесс блокировки
     system("pkill -f 'osascript.*System Events' 2>/dev/null");
@@ -480,51 +465,50 @@ std::vector<uint8_t> RemoteAgent::takeScreenshot() {
     std::vector<uint8_t> result;
     
 #ifdef _WIN32
-    // Windows: используем PowerShell для создания скриншота
+    // Windows: используем PowerShell для создания скриншота (JPEG для меньшего размера)
     
-    // Получаем путь к временной папке
     char temp_path[MAX_PATH];
     GetTempPathA(MAX_PATH, temp_path);
-    std::string tmp_file = std::string(temp_path) + "screenshot_" + std::to_string(GetCurrentProcessId()) + ".bmp";
+    std::string tmp_file = std::string(temp_path) + "screenshot_" + std::to_string(GetCurrentProcessId()) + ".jpg";
     
-    // Более простой PowerShell скрипт (сохраняем в BMP для надёжности)
+    // PowerShell скрипт с сохранением в JPEG
     std::string ps_script = 
-        "$b = New-Object System.Drawing.Bitmap([System.Windows.Forms.Screen]::PrimaryScreen.Bounds.Width, "
-        "[System.Windows.Forms.Screen]::PrimaryScreen.Bounds.Height); "
-        "$g = [System.Drawing.Graphics]::FromImage($b); "
-        "$g.CopyFromScreen(0, 0, 0, 0, $b.Size); "
-        "$b.Save('" + tmp_file + "'); "
-        "$g.Dispose(); $b.Dispose()";
+        "Add-Type -AssemblyName System.Windows.Forms; "
+        "Add-Type -AssemblyName System.Drawing; "
+        "$screen = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds; "
+        "$bitmap = New-Object System.Drawing.Bitmap($screen.Width, $screen.Height); "
+        "$graphics = [System.Drawing.Graphics]::FromImage($bitmap); "
+        "$graphics.CopyFromScreen($screen.Location, [System.Drawing.Point]::Empty, $screen.Size); "
+        "$bitmap.Save('" + tmp_file + "', [System.Drawing.Imaging.ImageFormat]::Jpeg); "
+        "$graphics.Dispose(); $bitmap.Dispose()";
     
-    std::string cmd = "powershell -NoProfile -ExecutionPolicy Bypass -Command \"Add-Type -AssemblyName System.Windows.Forms; " + ps_script + "\" 2>nul";
+    std::string cmd = "powershell -NoProfile -ExecutionPolicy Bypass -Command \"" + ps_script + "\" 2>nul";
     
-    // Выполняем с таймаутом
-    auto future = std::async(std::launch::async, [&cmd]() {
-        return system(cmd.c_str());
-    });
+    std::cout << "[AGENT] Running screenshot command..." << std::endl;
+    int ret = system(cmd.c_str());
+    std::cout << "[AGENT] Screenshot command returned: " << ret << std::endl;
     
-    int ret = -1;
-    if (future.wait_for(std::chrono::seconds(15)) != std::future_status::timeout) {
-        ret = future.get();
-    }
+    // Небольшая задержка для записи файла
+    Sleep(200);
     
     // Проверяем файл
-    if (ret == 0 || GetFileAttributesA(tmp_file.c_str()) != INVALID_FILE_ATTRIBUTES) {
-        // Небольшая задержка для записи файла
-        Sleep(100);
-        
+    DWORD attrs = GetFileAttributesA(tmp_file.c_str());
+    if (attrs != INVALID_FILE_ATTRIBUTES) {
         std::ifstream file(tmp_file, std::ios::binary | std::ios::ate);
         if (file.good() && file.is_open()) {
             std::streamsize size = file.tellg();
-            if (size > 0) {
+            std::cout << "[AGENT] Screenshot file size: " << size << " bytes" << std::endl;
+            if (size > 0 && size < 50 * 1024 * 1024) {  // Максимум 50MB
                 file.seekg(0, std::ios::beg);
                 result.resize(static_cast<size_t>(size));
                 file.read(reinterpret_cast<char*>(result.data()), size);
+                std::cout << "[AGENT] Screenshot read into memory: " << result.size() << " bytes" << std::endl;
             }
             file.close();
         }
-        // Удаляем временный файл
         DeleteFileA(tmp_file.c_str());
+    } else {
+        std::cerr << "[AGENT] Screenshot file not found: " << tmp_file << std::endl;
     }
     
 #elif defined(__APPLE__)

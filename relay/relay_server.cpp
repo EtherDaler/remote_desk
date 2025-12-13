@@ -473,6 +473,7 @@ bool RelayServer::forwardInputCommand(const std::string& agent_id, RemoteProto::
         std::lock_guard<std::mutex> lock(m_agents_mutex);
         auto it = m_agents.find(agent_id);
         if (it == m_agents.end()) {
+            std::cerr << "[RELAY] forwardInputCommand: agent not found" << std::endl;
             return false;
         }
         agent = it->second;
@@ -480,31 +481,40 @@ bool RelayServer::forwardInputCommand(const std::string& agent_id, RemoteProto::
     
     std::lock_guard<std::mutex> lock(agent->socket_mutex);
     
+    std::cout << "[RELAY] Forwarding input command to agent " << agent_id << std::endl;
+    
     // Отправляем команду агенту
     if (!sendPacket(agent->socket, static_cast<uint8_t>(cmd_type), "")) {
+        std::cerr << "[RELAY] Failed to send input command to agent" << std::endl;
         return false;
     }
+    
+    std::cout << "[RELAY] Waiting for response from agent..." << std::endl;
     
     // Ждём ответ
     std::vector<uint8_t> header_buffer(RemoteProto::HEADER_SIZE);
     if (!recvAll(agent->socket, header_buffer.data(), RemoteProto::HEADER_SIZE)) {
+        std::cerr << "[RELAY] Failed to receive header from agent" << std::endl;
         return false;
     }
     
     RemoteProto::PacketHeader header;
     if (!RemoteProto::parseHeader(header_buffer.data(), header)) {
+        std::cerr << "[RELAY] Failed to parse header from agent" << std::endl;
         return false;
     }
     
     std::vector<uint8_t> payload(header.payload_size);
     if (header.payload_size > 0) {
         if (!recvAll(agent->socket, payload.data(), header.payload_size)) {
+            std::cerr << "[RELAY] Failed to receive payload from agent" << std::endl;
             return false;
         }
     }
     
     response_type = header.type;
     response = std::string(payload.begin(), payload.end());
+    std::cout << "[RELAY] Received response from agent: " << response << std::endl;
     return true;
 }
 
@@ -579,36 +589,51 @@ bool RelayServer::forwardScreenshotRequest(const std::string& agent_id, std::vec
     
     std::lock_guard<std::mutex> lock(agent->socket_mutex);
     
+    std::cout << "[RELAY] Sending screenshot request to agent..." << std::endl;
+    
     // Отправляем запрос на скриншот
     if (!sendPacket(agent->socket, static_cast<uint8_t>(RemoteProto::MessageType::SCREENSHOT), "")) {
+        std::cerr << "[RELAY] Failed to send screenshot request" << std::endl;
         return false;
     }
+    
+    std::cout << "[RELAY] Waiting for screenshot response..." << std::endl;
     
     // Ждём ответ (может быть большим)
     std::vector<uint8_t> header_buffer(RemoteProto::HEADER_SIZE);
     if (!recvAll(agent->socket, header_buffer.data(), RemoteProto::HEADER_SIZE)) {
+        std::cerr << "[RELAY] Failed to receive screenshot header" << std::endl;
         return false;
     }
     
     RemoteProto::PacketHeader header;
     if (!RemoteProto::parseHeader(header_buffer.data(), header)) {
+        std::cerr << "[RELAY] Failed to parse screenshot header" << std::endl;
         return false;
     }
     
+    std::cout << "[RELAY] Screenshot header received: type=" << static_cast<int>(header.type) 
+              << ", size=" << header.payload_size << std::endl;
+    
     if (header.type != RemoteProto::MessageType::SCREENSHOT_DATA) {
+        std::cerr << "[RELAY] Screenshot response is not SCREENSHOT_DATA" << std::endl;
         // Пропускаем payload ошибки
         if (header.payload_size > 0) {
             std::vector<uint8_t> error_payload(header.payload_size);
             recvAll(agent->socket, error_payload.data(), header.payload_size);
+            std::cerr << "[RELAY] Screenshot error: " << std::string(error_payload.begin(), error_payload.end()) << std::endl;
         }
         return false;
     }
     
     screenshot_data.resize(header.payload_size);
     if (header.payload_size > 0) {
+        std::cout << "[RELAY] Receiving screenshot data (" << header.payload_size << " bytes)..." << std::endl;
         if (!recvAll(agent->socket, screenshot_data.data(), header.payload_size)) {
+            std::cerr << "[RELAY] Failed to receive screenshot data" << std::endl;
             return false;
         }
+        std::cout << "[RELAY] Screenshot data received successfully" << std::endl;
     }
     
     return true;
