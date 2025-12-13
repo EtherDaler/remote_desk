@@ -4,12 +4,13 @@
 #include <cstring>
 #include <unistd.h>
 #include <sys/socket.h>
+#include <sys/time.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <netdb.h>
 #include <sstream>
 
-AdminClient::AdminClient() : m_socket(-1) {}
+AdminClient::AdminClient() : m_socket(-1), m_input_locked(false) {}
 
 AdminClient::~AdminClient() {
     disconnect();
@@ -42,6 +43,13 @@ bool AdminClient::connect(const std::string& host, uint16_t port, const std::str
         return false;
     }
     
+    // Устанавливаем таймаут на сокет (60 секунд)
+    struct timeval tv;
+    tv.tv_sec = 60;
+    tv.tv_usec = 0;
+    setsockopt(m_socket, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+    setsockopt(m_socket, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+    
     // Авторизуемся
     if (!sendPacket(static_cast<uint8_t>(RemoteProto::MessageType::ADMIN_AUTH), token)) {
         std::cerr << "Error: Failed to send auth" << std::endl;
@@ -71,12 +79,18 @@ bool AdminClient::connect(const std::string& host, uint16_t port, const std::str
 }
 
 void AdminClient::disconnect() {
+    // Разблокируем ввод перед отключением
+    if (m_input_locked && !m_selected_agent.empty()) {
+        unlockInput();
+    }
+    
     if (m_socket >= 0) {
         sendPacket(static_cast<uint8_t>(RemoteProto::MessageType::DISCONNECT), "");
         close(m_socket);
         m_socket = -1;
     }
     m_selected_agent.clear();
+    m_input_locked = false;
 }
 
 std::vector<RemoteProto::AgentInfo> AdminClient::listAgents() {
@@ -203,5 +217,110 @@ bool AdminClient::recvPacket(RemoteProto::PacketHeader& header, std::vector<uint
     }
     
     return true;
+}
+
+bool AdminClient::lockInput() {
+    if (!isConnected()) {
+        std::cerr << "Error: Not connected" << std::endl;
+        return false;
+    }
+    
+    if (m_selected_agent.empty()) {
+        std::cerr << "Error: No agent selected" << std::endl;
+        return false;
+    }
+    
+    sendPacket(static_cast<uint8_t>(RemoteProto::MessageType::INPUT_LOCK), "");
+    
+    RemoteProto::PacketHeader header;
+    std::vector<uint8_t> payload;
+    if (!recvPacket(header, payload)) {
+        std::cerr << "Error: Failed to receive response" << std::endl;
+        return false;
+    }
+    
+    if (header.type == RemoteProto::MessageType::INPUT_LOCK_OK) {
+        m_input_locked = true;
+        return true;
+    } else if (header.type == RemoteProto::MessageType::ERROR) {
+        std::cerr << "Error: " << std::string(payload.begin(), payload.end()) << std::endl;
+        return false;
+    } else if (header.type == RemoteProto::MessageType::AGENT_OFFLINE) {
+        std::cerr << "Error: Agent went offline" << std::endl;
+        m_selected_agent.clear();
+        return false;
+    }
+    
+    return false;
+}
+
+bool AdminClient::unlockInput() {
+    if (!isConnected()) {
+        std::cerr << "Error: Not connected" << std::endl;
+        return false;
+    }
+    
+    if (m_selected_agent.empty()) {
+        std::cerr << "Error: No agent selected" << std::endl;
+        return false;
+    }
+    
+    sendPacket(static_cast<uint8_t>(RemoteProto::MessageType::INPUT_UNLOCK), "");
+    
+    RemoteProto::PacketHeader header;
+    std::vector<uint8_t> payload;
+    if (!recvPacket(header, payload)) {
+        std::cerr << "Error: Failed to receive response" << std::endl;
+        return false;
+    }
+    
+    if (header.type == RemoteProto::MessageType::INPUT_UNLOCK_OK) {
+        m_input_locked = false;
+        return true;
+    } else if (header.type == RemoteProto::MessageType::ERROR) {
+        std::cerr << "Error: " << std::string(payload.begin(), payload.end()) << std::endl;
+        return false;
+    } else if (header.type == RemoteProto::MessageType::AGENT_OFFLINE) {
+        std::cerr << "Error: Agent went offline" << std::endl;
+        m_selected_agent.clear();
+        return false;
+    }
+    
+    return false;
+}
+
+bool AdminClient::takeScreenshot() {
+    if (!isConnected()) {
+        std::cerr << "Error: Not connected" << std::endl;
+        return false;
+    }
+    
+    if (m_selected_agent.empty()) {
+        std::cerr << "Error: No agent selected" << std::endl;
+        return false;
+    }
+    
+    sendPacket(static_cast<uint8_t>(RemoteProto::MessageType::SCREENSHOT), "");
+    
+    RemoteProto::PacketHeader header;
+    std::vector<uint8_t> payload;
+    if (!recvPacket(header, payload)) {
+        std::cerr << "Error: Failed to receive response" << std::endl;
+        return false;
+    }
+    
+    if (header.type == RemoteProto::MessageType::SCREENSHOT_DATA) {
+        std::cout << "Screenshot received (" << payload.size() << " bytes), sending to Telegram..." << std::endl;
+        return true;
+    } else if (header.type == RemoteProto::MessageType::SCREENSHOT_ERROR) {
+        std::cerr << "Error: " << std::string(payload.begin(), payload.end()) << std::endl;
+        return false;
+    } else if (header.type == RemoteProto::MessageType::AGENT_OFFLINE) {
+        std::cerr << "Error: Agent went offline" << std::endl;
+        m_selected_agent.clear();
+        return false;
+    }
+    
+    return false;
 }
 

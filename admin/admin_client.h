@@ -24,8 +24,16 @@ public:
     // Выполнение команды на выбранном агенте
     std::string executeCommand(const std::string& command);
     
+    // Блокировка/разблокировка ввода на агенте
+    bool lockInput();
+    bool unlockInput();
+    
+    // Скриншот
+    bool takeScreenshot();
+    
     // Текущий выбранный агент
     std::string getSelectedAgent() const { return m_selected_agent; }
+    bool isInputLocked() const { return m_input_locked; }
     
     bool isConnected() const { return m_socket >= 0; }
 
@@ -37,5 +45,6 @@ private:
     
     int m_socket;
     std::string m_selected_agent;
+    bool m_input_locked;
 };
 

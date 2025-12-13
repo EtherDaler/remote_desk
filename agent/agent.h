@@ -1,6 +1,7 @@
 #pragma once
 
 #include <string>
+#include <vector>
 #include <atomic>
 #include <memory>
 
@@ -31,6 +32,13 @@ private:
     void handleCommands();
     std::string executeCommand(const std::string& command);
     
+    // Блокировка ввода (клавиатура + мышь)
+    bool lockInput();
+    bool unlockInput();
+    
+    // Скриншот
+    std::vector<uint8_t> takeScreenshot();
+    
     bool sendAll(const uint8_t* data, size_t size);
     bool recvAll(uint8_t* data, size_t size);
     bool sendPacket(uint8_t msg_type, const std::string& payload);
@@ -45,4 +53,5 @@ private:
     int m_socket;
     std::atomic<bool> m_running;
     std::atomic<bool> m_connected;
+    bool m_input_locked;
 };

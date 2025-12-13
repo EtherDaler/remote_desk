@@ -26,6 +26,17 @@ enum class MessageType : uint8_t {
     COMMAND = 0x20,             // Команда для выполнения
     RESPONSE = 0x21,            // Ответ с результатом
     
+    // Блокировка ввода
+    INPUT_LOCK = 0x25,          // Заблокировать клавиатуру и мышь
+    INPUT_UNLOCK = 0x26,        // Разблокировать клавиатуру и мышь
+    INPUT_LOCK_OK = 0x27,       // Подтверждение блокировки
+    INPUT_UNLOCK_OK = 0x28,     // Подтверждение разблокировки
+    
+    // Скриншот
+    SCREENSHOT = 0x40,          // Запрос скриншота
+    SCREENSHOT_DATA = 0x41,     // Данные скриншота (PNG)
+    SCREENSHOT_ERROR = 0x42,    // Ошибка создания скриншота
+    
     // Служебные
     HEARTBEAT = 0x30,           // Проверка соединения
     DISCONNECT = 0x31,          // Отключение
@@ -55,7 +66,7 @@ __attribute__((packed))
 #endif
 
 constexpr size_t HEADER_SIZE = sizeof(PacketHeader);
-constexpr size_t MAX_PAYLOAD_SIZE = 1024 * 1024; // 1MB
+constexpr size_t MAX_PAYLOAD_SIZE = 10 * 1024 * 1024; // 10MB (для скриншотов)
 constexpr uint16_t DEFAULT_PORT = 9999;
 
 // Сериализация пакета

