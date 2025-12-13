@@ -150,10 +150,21 @@ void RelayServer::handleConnection(int client_socket, const std::string& client_
         // Отправляем уведомление в Telegram
         notifyAgentConnected(info.name, info.os, client_ip);
         
-        // Больше не запускаем отдельный поток чтения от агента,
-        // чтобы не было гонки с forward* запросами.
-        // Соединение остаётся открытым, все запросы к агенту идут синхронно
-        // через mutex на сокете.
+        // Запускаем фоновый пинг агента для своевременного удаления при обрыве
+        std::thread([this, agent_id = info.id, agent_name = info.name]() {
+            while (m_running) {
+                std::this_thread::sleep_for(std::chrono::seconds(15));
+                if (!m_running) break;
+                if (!pingAgent(agent_id)) {
+                    std::lock_guard<std::mutex> lock(m_agents_mutex);
+                    m_agents.erase(agent_id);
+                    notifyAgentDisconnected(agent_name);
+                    std::cout << "[RELAY] Agent disconnected (ping failed): " << agent_id << std::endl;
+                    break;
+                }
+            }
+        }).detach();
+        
         return;
         
     } else if (header.type == RemoteProto::MessageType::ADMIN_AUTH) {
@@ -670,6 +681,51 @@ bool RelayServer::forwardScreenshotRequest(const std::string& agent_id, std::vec
         std::lock_guard<std::mutex> lock(m_agents_mutex);
         m_agents.erase(agent_id);
         notifyAgentDisconnected(agent_name);
+    }
+    
+    return ok;
+}
+
+bool RelayServer::pingAgent(const std::string& agent_id) {
+    std::shared_ptr<ConnectedAgent> agent;
+    {
+        std::lock_guard<std::mutex> lock(m_agents_mutex);
+        auto it = m_agents.find(agent_id);
+        if (it == m_agents.end()) {
+            return false;
+        }
+        agent = it->second;
+    }
+    
+    bool ok = true;
+    {
+        std::lock_guard<std::mutex> lock(agent->socket_mutex);
+        if (!sendPacket(agent->socket, static_cast<uint8_t>(RemoteProto::MessageType::HEARTBEAT), "ping")) {
+            ok = false;
+        } else {
+            std::vector<uint8_t> header_buffer(RemoteProto::HEADER_SIZE);
+            if (!recvAll(agent->socket, header_buffer.data(), RemoteProto::HEADER_SIZE)) {
+                ok = false;
+            } else {
+                RemoteProto::PacketHeader header;
+                if (!RemoteProto::parseHeader(header_buffer.data(), header)) {
+                    ok = false;
+                } else if (header.type != RemoteProto::MessageType::HEARTBEAT) {
+                    // читаем и игнорируем payload
+                    if (header.payload_size > 0) {
+                        std::vector<uint8_t> payload(header.payload_size);
+                        recvAll(agent->socket, payload.data(), header.payload_size);
+                    }
+                    ok = false;
+                } else {
+                    // пропускаем payload пинга
+                    if (header.payload_size > 0) {
+                        std::vector<uint8_t> payload(header.payload_size);
+                        recvAll(agent->socket, payload.data(), header.payload_size);
+                    }
+                }
+            }
+        }
     }
     
     return ok;

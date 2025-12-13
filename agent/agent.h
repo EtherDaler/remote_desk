@@ -44,6 +44,7 @@ private:
     bool sendPacket(uint8_t msg_type, const std::string& payload);
     
     std::string getOsInfo();
+    std::string m_cwd; // текущая рабочая директория для команд
     
     std::string m_relay_host;
     uint16_t m_relay_port;

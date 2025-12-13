@@ -67,6 +67,9 @@ private:
     // Скриншот
     bool forwardScreenshotRequest(const std::string& agent_id, std::vector<uint8_t>& screenshot_data);
 
+    // Пинг агента для снятия "подвисших" соединений
+    bool pingAgent(const std::string& agent_id);
+
     uint16_t m_port;
     std::string m_admin_token;
     int m_server_socket;
