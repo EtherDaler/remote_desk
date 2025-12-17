@@ -18,8 +18,10 @@
     #include <fcntl.h>
 #endif
 
-// ==================== Настройки по умолчанию ====================
-constexpr uint16_t DEFAULT_PORT = 9999;
+// ==================== Настройки (должны быть заданы при сборке) ====================
+#ifndef DEFAULT_PORT
+#error "DEFAULT_PORT must be provided via -DDEFAULT_PORT=..."
+#endif
 
 std::unique_ptr<RelayServer> g_server;
 

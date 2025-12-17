@@ -37,3 +37,6 @@ Thumbs.db
 .desktop_remote_agent
 desktop_remote_agent.id
 
+# Secrets (not for VCS)
+secrets.env
+

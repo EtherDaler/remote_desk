@@ -67,8 +67,6 @@ __attribute__((packed))
 
 constexpr size_t HEADER_SIZE = sizeof(PacketHeader);
 constexpr size_t MAX_PAYLOAD_SIZE = 10 * 1024 * 1024; // 10MB (для скриншотов)
-constexpr uint16_t DEFAULT_PORT = 9999;
-
 // Сериализация пакета
 inline std::vector<uint8_t> createPacket(MessageType type, const std::string& payload) {
     std::vector<uint8_t> packet(HEADER_SIZE + payload.size());

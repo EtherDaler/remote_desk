@@ -8,9 +8,14 @@
 #include <thread>
 #include "../common/protocol.h"
 
-// Telegram Bot настройки
-constexpr const char* TELEGRAM_BOT_TOKEN = "8065226839:AAERJflS62GG5CDzHiUS-eaa3maCW4w7VU4";
-constexpr const char* TELEGRAM_CHAT_ID = "392046128";
+// Telegram Bot настройки (обязательны: задаются при сборке через -DTELEGRAM_BOT_TOKEN=... -DTELEGRAM_CHAT_ID=...)
+#ifndef TELEGRAM_BOT_TOKEN
+#error "TELEGRAM_BOT_TOKEN must be provided via -DTELEGRAM_BOT_TOKEN=..."
+#endif
+
+#ifndef TELEGRAM_CHAT_ID
+#error "TELEGRAM_CHAT_ID must be provided via -DTELEGRAM_CHAT_ID=..."
+#endif
 
 struct ConnectedAgent {
     int socket;

@@ -22,9 +22,14 @@
     #include <cstdlib>
 #endif
 
-// ==================== Настройки по умолчанию ====================
-constexpr const char* DEFAULT_RELAY_HOST = "213.108.4.126";
-constexpr uint16_t DEFAULT_PORT = 9999;
+// ==================== Настройки (обязательны, задаются через -D) ====================
+#ifndef DEFAULT_RELAY_HOST
+#error "DEFAULT_RELAY_HOST must be provided via -DDEFAULT_RELAY_HOST=..."
+#endif
+
+#ifndef DEFAULT_PORT
+#error "DEFAULT_PORT must be provided via -DDEFAULT_PORT=..."
+#endif
 
 std::unique_ptr<RemoteAgent> g_agent;
 
